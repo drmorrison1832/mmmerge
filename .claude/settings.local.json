@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const df = require\\('date-fns'\\); console.log\\(typeof df.format, typeof df.formatDate\\);\")",
+      "Bash(npm run *)",
+      "Bash(npm test *)"
+    ]
+  }
+}

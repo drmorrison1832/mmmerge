@@ -1,0 +1,37 @@
+{
+  "sheetId": "1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij",
+  "sheetTabName": "Contrats",
+  "gdocs": [
+    {
+      "name": "Contrat CDDU",
+      "template_id": "1TemplateGdocsIdXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_folder": "Contrats/{{Annee:date[format:yyyy]}}",
+      "output_filename": "CDDU {{Nom}} {{Prenom}}",
+      "share": {
+        "email": {
+          "addresses": ["{{Email}}"],
+          "permission": "reader"
+        }
+      }
+    }
+  ],
+  "pdf": [
+    {
+      "name": "Contrat CDDU (PDF)",
+      "template_id": "1TemplatePdfIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_folder_id": "1DriveFolderIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_filename": "CDDU {{Nom}} {{Prenom}}"
+    }
+  ],
+  "mail": [
+    {
+      "name": "Envoi contrat",
+      "to": "{{Email}}",
+      "subject": "Votre contrat CDDU",
+      "template_html": "<p>Bonjour {{Prenom}},</p><p>Voici votre contrat : {{link:pdf[0]}}</p>",
+      "draft_only": true,
+      "attach": "generated",
+      "generated": ["pdf[0]"]
+    }
+  ]
+}
