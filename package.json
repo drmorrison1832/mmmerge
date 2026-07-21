@@ -1,0 +1,29 @@
+{
+  "name": "mmmerge",
+  "version": "0.1.0",
+  "description": "Outil local de publipostage automatisé multi-format piloté par Google Sheets",
+  "type": "module",
+  "bin": {
+    "mmmerge": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "date-fns": "^4.1.0",
+    "googleapis": "^144.0.0",
+    "mri": "^1.2.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

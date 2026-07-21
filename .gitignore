@@ -1,0 +1,13 @@
+# Dépendances
+node_modules/
+
+# Sortie de compilation
+dist/
+
+# Secrets d'authentification Google — ne jamais committer
+credentials.json
+token.json
+
+# Logs et divers
+*.log
+.DS_Store
