@@ -1,14 +1,55 @@
 /**
  * Génération des instances PDF (cycle Doc temporaire → export → suppression).
- * Voir architecture.md §3, §7. STUB — à implémenter.
+ * Voir architecture.md §3, §7.
  */
-import type { RowContext } from '../rowContext.js';
+import type { RowContext, FileOutput } from '../rowContext.js';
 import type { PdfInstance } from '../../config/schema.js';
+import { renderTemplateString } from '../../templateEngine.js';
+import type { PipelineDeps } from '../deps.js';
+import { resolveOutputFolderId, fillTemplateTags } from './googleDocsHelpers.js';
 
 export async function runPdfInstance(
-  _moduleName: string,
-  _config: PdfInstance,
-  _context: RowContext,
+  moduleName: string,
+  config: PdfInstance,
+  context: RowContext,
+  deps: PipelineDeps,
 ): Promise<void> {
-  throw new Error('runPdfInstance: not implemented');
+  const { rawData } = context;
+  const folderId = await resolveOutputFolderId(moduleName, deps, config, rawData);
+  const filename = renderTemplateString(
+    moduleName,
+    config.output_filename,
+    rawData,
+    context.outputs,
+    deps.defaultDateFormat,
+  );
+
+  const { data: tempCopy } = await deps.drive.files.copy({
+    fileId: config.template_id,
+    requestBody: { name: `[tmp] ${filename}` },
+  });
+  const tempDocId = tempCopy.id!;
+
+  await fillTemplateTags(moduleName, deps.docs, tempDocId, rawData, deps.defaultDateFormat);
+
+  const { data: pdfStream } = await deps.drive.files.export(
+    { fileId: tempDocId, mimeType: 'application/pdf' },
+    { responseType: 'stream' },
+  );
+
+  const { data: created } = await deps.drive.files.create({
+    requestBody: { name: filename, parents: [folderId] },
+    media: { mimeType: 'application/pdf', body: pdfStream },
+  });
+  const fileId = created.id!;
+
+  await deps.drive.files.delete({ fileId: tempDocId });
+
+  const output: FileOutput = {
+    filename,
+    url: `https://drive.google.com/file/d/${fileId}/view`,
+    createdAt: new Date().toISOString(),
+  };
+  context.outputs[moduleName] = output;
+  await deps.sheetsWriter.updateOutput(context.rowNumber, moduleName, output);
 }
