@@ -1,14 +1,39 @@
 /**
  * Génération des instances gDocs + resolveShareSettings. Voir architecture.md §3, §7.
- * STUB — à implémenter.
  */
-import type { RowContext } from '../rowContext.js';
+import type { RowContext, FileOutput } from '../rowContext.js';
 import type { GdocsInstance } from '../../config/schema.js';
+import { renderTemplateString } from '../../templateEngine.js';
+import type { PipelineDeps } from '../deps.js';
+import { resolveOutputFolderId, fillTemplateTags, resolveShareSettings } from './googleDocsHelpers.js';
 
 export async function runGdocsInstance(
-  _moduleName: string,
-  _config: GdocsInstance,
-  _context: RowContext,
+  moduleName: string,
+  config: GdocsInstance,
+  context: RowContext,
+  deps: PipelineDeps,
 ): Promise<void> {
-  throw new Error('runGdocsInstance: not implemented');
+  const { rawData } = context;
+  const folderId = await resolveOutputFolderId(moduleName, deps, config, rawData);
+  const filename = renderTemplateString(moduleName, config.output_filename, rawData, context.outputs, deps.defaultDateFormat);
+
+  const { data: copied } = await deps.drive.files.copy({
+    fileId: config.template_id,
+    requestBody: { name: filename, parents: [folderId] },
+  });
+  const fileId = copied.id!;
+
+  await fillTemplateTags(moduleName, deps.docs, fileId, rawData, deps.defaultDateFormat);
+
+  const output: FileOutput = {
+    filename,
+    url: `https://docs.google.com/document/d/${fileId}/edit`,
+    createdAt: new Date().toISOString(),
+  };
+  context.outputs[moduleName] = output;
+  await deps.sheetsWriter.updateOutput(context.rowNumber, moduleName, output);
+
+  if (config.share) {
+    await resolveShareSettings(moduleName, deps.drive, fileId, config.share, rawData, deps.defaultDateFormat);
+  }
 }
