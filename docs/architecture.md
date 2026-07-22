@@ -1,7 +1,9 @@
 # Architecture Technique : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-22 — v6
-> **Résumé des derniers changements :** Implémentation complète (tous les modules, précédemment stubs). Ajouts issus de cette implémentation, non prévus par les versions précédentes de ce document :
+> **Dernière mise à jour :** 2026-07-22 — v7
+> **Résumé des derniers changements :** URL de brouillon Gmail (§3) vérifiée en conditions réelles et **corrigée** : `https://mail.google.com/mail/u/0/#drafts?compose=<data.message.id>` — ni le format `#drafts/<id>` (ne fonctionne plus dans l'UI Gmail actuelle), ni `data.id` (l'ID du brouillon lui-même, qui n'ouvre rien) ne fonctionnaient. URL d'un mail envoyé (`#sent/<data.id>`) confirmée correcte telle quelle.
+>
+> **Résumé v6 (2026-07-22) :** Implémentation complète (tous les modules, précédemment stubs). Ajouts issus de cette implémentation, non prévus par les versions précédentes de ce document :
 > - **`PipelineDeps`** (`pipeline/deps.ts`, nouveau) : dépendances partagées par `gdocs.ts`/`pdf.ts`/`mail.ts`, construites une seule fois par exécution par l'orchestrateur (clients Google, `SheetsWriter`, cache de dossiers "par exécution", `defaultDateFormat`, `autoCreateFolders`, `dryRun`, `verbose`).
 > - **`--dry-run`** : chaque module du pipeline (`gdocs`/`pdf`/`mail`) résout les champs purs (nom de fichier, destinataires…) puis court-circuite avant tout appel Drive/Docs/Gmail, écrivant une sortie synthétique (`url: '(dry-run)'`). `SheetsWriter` simule ses écritures (`writeCells` en no-op loggé) tout en conservant ses lectures réelles.
 > - **`--init-columns`** (nouveau flag) : crée les colonnes système `mmm_*` manquantes (ajoutées en fin d'en-tête) au lieu de lever une erreur — voir §5, §6.
@@ -11,7 +13,7 @@
 > - **`mimeMessage.ts`** (nouveau, `pipeline/modules/`) : construction manuelle du message MIME pour Gmail (`raw`), logique pure séparée de `mail.ts`.
 > - Racine de résolution de dossiers Drive (`folderResolver.ts`) : "Mon Drive" (`root`) pour le premier segment d'un chemin comme `Contrats/2026`. Ambiguïté (plusieurs dossiers identiques au même niveau) → `Erreur`, par cohérence avec la règle déjà explicite pour `external` (specs.md §3).
 > - `driveRole` (`googleDocsHelpers.ts`) : `reader`/`commenter` inchangés, `editor` → `writer` (rôles natifs de l'API Drive).
-> - URL d'un brouillon Gmail : `data.id` (l'identifiant du brouillon retourné par `drafts.create`), pas `data.message.id` — **non vérifié en conditions réelles**.
+> - URL d'un brouillon Gmail — voir correction en tête de changelog (v7).
 > - `rawData` (construit par l'orchestrateur) inclut aussi les colonnes réservées `mmm_*`, sans filtrage — rien ne les distingue des colonnes libres à ce stade.
 > - "Ligne suivante" pour l'enchaînement `markInitialRow`/`closeRow` (§3, §5) = la prochaine ligne **éligible** de la liste déjà filtrée, pas nécessairement `rowNumber + 1`.
 > - `--verbose` implémenté seulement au niveau de l'orchestrateur (ligne/instance en cours) — pas encore instrumenté à l'intérieur des modules pour chaque appel API individuel. Sans incidence sur le comportement (`--verbose` ne change que la verbosité), mais une implémentation partielle.
@@ -253,7 +255,7 @@ L'API Gmail n'offre pas de méthode haut niveau pour composer un message avec pi
 - Corps HTML et chaque pièce jointe en base64 (`Content-Transfer-Encoding: base64`), lignes limitées à 76 caractères (RFC 2045).
 - Contenu des pièces jointes téléchargé via `drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' })`, bufferisé puis encodé en base64.
 - Message final encodé en base64url (`toBase64Url`) pour le champ `raw`, requis par l'API Gmail.
-- `draft_only: true` → `users.drafts.create`, URL `mmm_outputs` = `#drafts/<data.id>` (l'ID du brouillon, pas `data.message.id` — **non vérifié en conditions réelles**). `draft_only: false` → `users.messages.send`, URL = `#sent/<data.id>` — **inféré par symétrie, non vérifié**.
+- `draft_only: true` → `users.drafts.create`, URL `mmm_outputs` = `https://mail.google.com/mail/u/0/#drafts?compose=<data.message.id>` — **vérifié en conditions réelles**. Ni `#drafts/<id>` (obsolète dans l'UI Gmail actuelle) ni `data.id` (l'ID du brouillon lui-même, qui n'ouvre rien) ne fonctionnent ; seul l'ID du **message** sous-jacent, avec le paramètre `?compose=`, ouvre effectivement le brouillon. `draft_only: false` → `users.messages.send`, URL = `https://mail.google.com/mail/u/0/#sent/<data.id>` — **également vérifié en conditions réelles**.
 
 ### Étapes de l'orchestrateur
 

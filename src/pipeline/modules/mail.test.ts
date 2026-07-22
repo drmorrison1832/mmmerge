@@ -35,7 +35,7 @@ function createMockDrive(files: MockFile[]) {
 }
 
 function createMockGmail() {
-  const draftsCreate = vi.fn(async () => ({ data: { id: 'draft-id' } }));
+  const draftsCreate = vi.fn(async () => ({ data: { id: 'draft-id', message: { id: 'draft-message-id' } } }));
   const messagesSend = vi.fn(async () => ({ data: { id: 'sent-id' } }));
   const gmail = {
     users: { drafts: { create: draftsCreate }, messages: { send: messagesSend } },
@@ -105,7 +105,7 @@ describe('runMailInstance', () => {
 
     expect(context.outputs['mail[0]']).toEqual({
       subject: 'Votre contrat',
-      url: 'https://mail.google.com/mail/u/0/#drafts/draft-id',
+      url: 'https://mail.google.com/mail/u/0/#drafts?compose=draft-message-id',
       attachments: [],
       createdAt: expect.any(String),
     });

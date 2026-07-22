@@ -148,7 +148,7 @@ export async function runMailInstance(
     const { data } = await deps.gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw } } });
     output = {
       subject,
-      url: `https://mail.google.com/mail/u/0/#drafts/${data.id}`,
+      url: `https://mail.google.com/mail/u/0/#drafts?compose=${data.message?.id}`,
       attachments: attachmentFilenames,
       createdAt: new Date().toISOString(),
     };
