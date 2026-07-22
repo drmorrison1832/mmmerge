@@ -16,4 +16,6 @@ export type PipelineDeps = {
   autoCreateFolders: boolean;
   /** --dry-run : aucun appel Drive/Docs/Gmail réel ; SheetsWriter simule aussi ses écritures. */
   dryRun: boolean;
+  /** --verbose : logs supplémentaires, aucun effet sur le comportement. */
+  verbose: boolean;
 };

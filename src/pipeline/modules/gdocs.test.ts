@@ -35,6 +35,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
     dryRun: false,
+    verbose: false,
     ...overrides,
   };
   return { deps, updateOutput };
