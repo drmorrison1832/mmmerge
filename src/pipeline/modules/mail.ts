@@ -122,7 +122,13 @@ export async function runMailInstance(
 
   if (deps.dryRun) {
     console.log(`[dry-run] ${moduleName} : ${config.draft_only ? 'créerait un brouillon' : 'enverrait un mail'} à "${to}", sujet "${subject}".`);
-    const output: MailOutput = { subject, url: '(dry-run)', attachments: [], createdAt: new Date().toISOString() };
+    const output: MailOutput = {
+      subject,
+      url: '(dry-run)',
+      draftOnly: config.draft_only,
+      attachments: [],
+      createdAt: new Date().toISOString(),
+    };
     context.outputs[moduleName] = output;
     await deps.sheetsWriter.updateOutput(context.rowNumber, moduleName, output);
     return;
@@ -149,6 +155,7 @@ export async function runMailInstance(
     output = {
       subject,
       url: `https://mail.google.com/mail/u/0/#drafts?compose=${data.message?.id}`,
+      draftOnly: true,
       attachments: attachmentFilenames,
       createdAt: new Date().toISOString(),
     };
@@ -157,6 +164,7 @@ export async function runMailInstance(
     output = {
       subject,
       url: `https://mail.google.com/mail/u/0/#sent/${data.id}`,
+      draftOnly: false,
       attachments: attachmentFilenames,
       createdAt: new Date().toISOString(),
     };

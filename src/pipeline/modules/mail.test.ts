@@ -106,6 +106,7 @@ describe('runMailInstance', () => {
     expect(context.outputs['mail[0]']).toEqual({
       subject: 'Votre contrat',
       url: 'https://mail.google.com/mail/u/0/#drafts?compose=draft-message-id',
+      draftOnly: true,
       attachments: [],
       createdAt: expect.any(String),
     });
@@ -122,6 +123,7 @@ describe('runMailInstance', () => {
     expect(messagesSend).toHaveBeenCalledOnce();
     expect(draftsCreate).not.toHaveBeenCalled();
     expect(context.outputs['mail[0]'].url).toBe('https://mail.google.com/mail/u/0/#sent/sent-id');
+    expect(mailOutputOf(context, 'mail[0]').draftOnly).toBe(false);
   });
 
   it('joint une instance pdf[] générée (attach: "generated")', async () => {
@@ -276,6 +278,7 @@ describe('runMailInstance', () => {
     expect(mailOutputOf(context, 'mail[0]')).toEqual({
       subject: 'Votre contrat',
       url: '(dry-run)',
+      draftOnly: true,
       attachments: [],
       createdAt: expect.any(String),
     });

@@ -1,7 +1,9 @@
 # Spécifications Techniques & Fonctionnelles : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-22 — v5
-> **Résumé des derniers changements :** URLs Gmail (§1) vérifiées en conditions réelles et corrigées suite au test : un brouillon s'ouvre via `https://mail.google.com/mail/u/0/#drafts?compose=<id>` (pas `#drafts/<id>`, qui ne fonctionne plus dans l'UI Gmail actuelle), et `<id>` est l'identifiant du **message** sous-jacent, pas celui du brouillon lui-même. URL d'un mail envoyé (`#sent/<id>`) confirmée correcte telle quelle.
+> **Dernière mise à jour :** 2026-07-22 — v6
+> **Résumé des derniers changements :** `mmm_outputs` : chaque entrée `mail[i]` gagne un champ `draftOnly` (reflète `draft_only` de l'instance), pour interpréter `url` sans consulter le profil (§1). Le lien de brouillon (`#drafts?compose=<id>`) est documenté comme fragile — cesse de fonctionner si le brouillon est modifié/restauré après coup, limite de la plateforme Gmail plutôt qu'un défaut MMMerge ; retenu quand même car aucune alternative (lien générique vers le dossier Brouillons) n'apporte d'information utile.
+>
+> **Résumé v5 (2026-07-22) :** URLs Gmail (§1) vérifiées en conditions réelles et corrigées suite au test : un brouillon s'ouvre via `https://mail.google.com/mail/u/0/#drafts?compose=<id>` (pas `#drafts/<id>`, qui ne fonctionne plus dans l'UI Gmail actuelle), et `<id>` est l'identifiant du **message** sous-jacent, pas celui du brouillon lui-même. URL d'un mail envoyé (`#sent/<id>`) confirmée correcte telle quelle.
 >
 > **Résumé v4 (2026-07-22) :** Précisions issues de la première implémentation complète. `--lines` ciblant une ligne hors du tableau de données (ou la ligne d'en-tête) lève désormais une erreur explicite plutôt que d'être ignoré silencieusement (§5). Portée exacte de `--validate` précisée : vérifie l'authentification, les colonnes système du Sheet et l'accessibilité Drive des `template_id`/`output_folder_id` — jamais `output_folder` (chemin dynamique), dont la résolution nécessite une ligne réelle (§5). Nouveau flag `--init-columns` pour créer les colonnes système manquantes plutôt que d'échouer (§1, §5) — pas de création automatique silencieuse, pour ne pas masquer une vraie erreur de configuration (mauvais onglet/Sheet). Purge (§2) : l'échec de mise à la corbeille d'un fichier déjà absent/inaccessible est loggé et n'interrompt pas la régénération de la ligne. URL d'un mail envoyé (`draft_only: false`) précisée par symétrie avec l'exemple brouillon existant (§1) — non vérifiée en conditions réelles à l'époque (voir v5).
 >
@@ -24,13 +26,14 @@ Les colonnes de données libres servent de balises (ex: une colonne `Nom` rempla
   "mail[0]": {
     "subject": "Votre contrat de juillet",
     "url": "https://mail.google.com/mail/u/0/#drafts?compose=ghi789",
+    "draftOnly": true,
     "attachments": ["CDDU Marie Dupont"],
     "createdAt": "2026-07-05T14:32:18Z"
   }
 }
 ```
 
-**Note sur l'exemple `mail[0]`** : l'URL `#drafts?compose=...` correspond à un brouillon (`draft_only: true`) — **vérifiée en conditions réelles** (l'ancien format `#drafts/<id>` ne fonctionne plus dans l'UI Gmail actuelle). Pour un mail réellement envoyé (`draft_only: false`), l'URL est `https://mail.google.com/mail/u/0/#sent/<id>` — **également vérifiée en conditions réelles**.
+**Note sur l'exemple `mail[0]`** : `draftOnly` reflète directement la valeur de `draft_only` de l'instance — permet de savoir comment interpréter `url` sans avoir à consulter le profil. Pour un brouillon (`draft_only: true`), l'URL suit le format `#drafts?compose=<id>` — **vérifiée en conditions réelles**, mais **fragile** : elle cesse de fonctionner si le brouillon est ensuite modifié ou restauré depuis la corbeille (l'ancien format `#drafts/<id>` ne fonctionne plus du tout dans l'UI Gmail actuelle). Cette fragilité est une limite de la plateforme Gmail, pas un bug MMMerge — le lien reste la meilleure option disponible juste après la génération. Pour un mail réellement envoyé (`draft_only: false`), l'URL `#sent/<id>` est stable — **vérifiée en conditions réelles**.
 
 **Colonnes système absentes du Sheet** : par défaut, une `Erreur` explicite liste toutes les colonnes `mmm_*` manquantes d'un coup. Le flag `--init-columns` (§5) permet de les créer automatiquement (ajoutées en fin d'en-tête) plutôt que d'échouer — pas de création automatique par défaut, pour ne pas masquer silencieusement une vraie erreur de configuration (mauvais `sheetTabName`/`sheetId`).
 

@@ -1,7 +1,9 @@
 # Architecture Technique : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-22 — v7
-> **Résumé des derniers changements :** URL de brouillon Gmail (§3) vérifiée en conditions réelles et **corrigée** : `https://mail.google.com/mail/u/0/#drafts?compose=<data.message.id>` — ni le format `#drafts/<id>` (ne fonctionne plus dans l'UI Gmail actuelle), ni `data.id` (l'ID du brouillon lui-même, qui n'ouvre rien) ne fonctionnaient. URL d'un mail envoyé (`#sent/<data.id>`) confirmée correcte telle quelle.
+> **Dernière mise à jour :** 2026-07-22 — v8
+> **Résumé des derniers changements :** `MailOutput` (§4) gagne `draftOnly: boolean` (reflète `config.draft_only` de l'instance), écrit par `runMailInstance` dans les trois branches (dry-run, brouillon, envoi) — permet d'interpréter `url` sans consulter le profil. Documenté : le lien de brouillon (`#drafts?compose=<id>`) est fragile par nature (voir v7) — cesse de fonctionner si le brouillon est modifié/restauré après coup, l'ID de composition utilisé par l'UI Gmail moderne étant interne au client web et non dérivable depuis l'API (confirmé par recherche : aucune méthode connue pour le reconstruire à partir de `draft.id`/`message.id`). Retenu malgré tout plutôt qu'un lien générique vers le dossier Brouillons, qui n'apporterait aucune information utile.
+>
+> **Résumé v7 (2026-07-22) :** URL de brouillon Gmail (§3) vérifiée en conditions réelles et **corrigée** : `https://mail.google.com/mail/u/0/#drafts?compose=<data.message.id>` — ni le format `#drafts/<id>` (ne fonctionne plus dans l'UI Gmail actuelle), ni `data.id` (l'ID du brouillon lui-même, qui n'ouvre rien) ne fonctionnaient. URL d'un mail envoyé (`#sent/<data.id>`) confirmée correcte telle quelle.
 >
 > **Résumé v6 (2026-07-22) :** Implémentation complète (tous les modules, précédemment stubs). Ajouts issus de cette implémentation, non prévus par les versions précédentes de ce document :
 > - **`PipelineDeps`** (`pipeline/deps.ts`, nouveau) : dépendances partagées par `gdocs.ts`/`pdf.ts`/`mail.ts`, construites une seule fois par exécution par l'orchestrateur (clients Google, `SheetsWriter`, cache de dossiers "par exécution", `defaultDateFormat`, `autoCreateFolders`, `dryRun`, `verbose`).
@@ -255,7 +257,7 @@ L'API Gmail n'offre pas de méthode haut niveau pour composer un message avec pi
 - Corps HTML et chaque pièce jointe en base64 (`Content-Transfer-Encoding: base64`), lignes limitées à 76 caractères (RFC 2045).
 - Contenu des pièces jointes téléchargé via `drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' })`, bufferisé puis encodé en base64.
 - Message final encodé en base64url (`toBase64Url`) pour le champ `raw`, requis par l'API Gmail.
-- `draft_only: true` → `users.drafts.create`, URL `mmm_outputs` = `https://mail.google.com/mail/u/0/#drafts?compose=<data.message.id>` — **vérifié en conditions réelles**. Ni `#drafts/<id>` (obsolète dans l'UI Gmail actuelle) ni `data.id` (l'ID du brouillon lui-même, qui n'ouvre rien) ne fonctionnent ; seul l'ID du **message** sous-jacent, avec le paramètre `?compose=`, ouvre effectivement le brouillon. `draft_only: false` → `users.messages.send`, URL = `https://mail.google.com/mail/u/0/#sent/<data.id>` — **également vérifié en conditions réelles**.
+- `draft_only: true` → `users.drafts.create`, `mmm_outputs.mail[i]` = `{ url: 'https://mail.google.com/mail/u/0/#drafts?compose=<data.message.id>', draftOnly: true, ... }` — **vérifié en conditions réelles**. Ni `#drafts/<id>` (obsolète dans l'UI Gmail actuelle) ni `data.id` (l'ID du brouillon lui-même, qui n'ouvre rien) ne fonctionnent ; seul l'ID du **message** sous-jacent, avec le paramètre `?compose=`, ouvre effectivement le brouillon. **Fragile par nature** : ce lien cesse de fonctionner dès que le brouillon est modifié ou restauré depuis la corbeille — l'ID de composition affiché par l'UI Gmail moderne (une longue chaîne alphanumérique, ex. `DmwnWrRrlZdPRSXhFTgQHrgNvnDNXqXjhlddPhsfXPBhDgClMzGkPnKfRZSRKdlcMQwLZTtSDcNQ`) est généré côté client et n'est pas dérivable depuis l'API Gmail. Retenu quand même : reste valide juste après la génération (le cas d'usage principal), et un lien générique vers `#drafts` n'apporterait aucune information que l'utilisateur n'a pas déjà en ouvrant Gmail manuellement. `draft_only: false` → `users.messages.send`, `mmm_outputs.mail[i]` = `{ url: 'https://mail.google.com/mail/u/0/#sent/<data.id>', draftOnly: false, ... }` — **vérifié en conditions réelles, lien stable**.
 
 ### Étapes de l'orchestrateur
 
@@ -275,7 +277,7 @@ L'API Gmail n'offre pas de méthode haut niveau pour composer un message avec pi
 
 ```ts
 type FileOutput = { filename: string; url: string; createdAt: string };
-type MailOutput = { subject: string; url: string; attachments: string[]; createdAt: string };
+type MailOutput = { subject: string; url: string; draftOnly: boolean; attachments: string[]; createdAt: string };
 
 type RowContext = {
   rowNumber: number;

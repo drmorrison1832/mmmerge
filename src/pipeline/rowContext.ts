@@ -10,10 +10,15 @@ export type FileOutput = {
   createdAt: string;
 };
 
-/** Sortie d'une instance Mail. `createdAt` est en ISO 8601. */
+/**
+ * Sortie d'une instance Mail. `createdAt` est en ISO 8601.
+ * `draftOnly` distingue un brouillon (`url` = lien de composition, potentiellement
+ * fragile — voir architecture.md §3) d'un mail réellement envoyé (`url` stable).
+ */
 export type MailOutput = {
   subject: string;
   url: string;
+  draftOnly: boolean;
   attachments: string[];
   createdAt: string;
 };
