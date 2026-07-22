@@ -14,4 +14,6 @@ export type PipelineDeps = {
   folderCache: Map<string, string>;
   defaultDateFormat: string;
   autoCreateFolders: boolean;
+  /** --dry-run : aucun appel Drive/Docs/Gmail réel ; SheetsWriter simule aussi ses écritures. */
+  dryRun: boolean;
 };

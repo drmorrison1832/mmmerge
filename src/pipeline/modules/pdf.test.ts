@@ -40,6 +40,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     folderCache: new Map(),
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
+    dryRun: false,
     ...overrides,
   };
   return { deps, updateOutput };
@@ -103,5 +104,21 @@ describe('runPdfInstance', () => {
     const deleteOrder = del.mock.invocationCallOrder[0];
     const updateOutputOrder = updateOutput.mock.invocationCallOrder[0];
     expect(deleteOrder).toBeLessThan(updateOutputOrder);
+  });
+
+  it("n'appelle aucune API Google en mode dry-run, écrit une sortie synthétique", async () => {
+    const { drive, copy } = createMockDrive();
+    const { deps, updateOutput } = createDeps({ drive, dryRun: true });
+    const context = baseContext();
+
+    await runPdfInstance('pdf[0]', baseConfig(), context, deps);
+
+    expect(copy).not.toHaveBeenCalled();
+    expect(context.outputs['pdf[0]']).toEqual({
+      filename: 'CDDU Dupont',
+      url: '(dry-run)',
+      createdAt: expect.any(String),
+    });
+    expect(updateOutput).toHaveBeenCalledWith(5, 'pdf[0]', context.outputs['pdf[0]']);
   });
 });

@@ -43,9 +43,15 @@ export class SheetsWriter {
     private readonly sheetId: string,
     private readonly sheetTabName: string,
     private readonly columns: ColumnIndexes,
+    private readonly dryRun: boolean,
   ) {}
 
-  static async create(sheets: sheets_v4.Sheets, sheetId: string, sheetTabName: string): Promise<SheetsWriter> {
+  static async create(
+    sheets: sheets_v4.Sheets,
+    sheetId: string,
+    sheetTabName: string,
+    dryRun = false,
+  ): Promise<SheetsWriter> {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: sheetId,
       range: `${sheetTabName}!1:1`,
@@ -61,7 +67,7 @@ export class SheetsWriter {
       columns[name] = index;
     }
 
-    return new SheetsWriter(sheets, sheetId, sheetTabName, columns);
+    return new SheetsWriter(sheets, sheetId, sheetTabName, columns, dryRun);
   }
 
   private cellRange(column: number, rowNumber: number): string {
@@ -73,6 +79,11 @@ export class SheetsWriter {
   }
 
   private async writeCells(cells: CellWrite[]): Promise<void> {
+    if (this.dryRun) {
+      const ranges = cells.map((cell) => this.cellRange(cell.column, cell.rowNumber)).join(', ');
+      console.log(`[dry-run] Écriture Sheets simulée : ${ranges}`);
+      return;
+    }
     await this.sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: this.sheetId,
       requestBody: {

@@ -114,13 +114,21 @@ export async function runMailInstance(
 ): Promise<void> {
   const { rawData, outputs } = context;
 
-  const resolvedAttachments = await resolveAttachments(moduleName, config, context, deps);
-
   const to = renderTemplateString(moduleName, config.to, rawData, outputs, deps.defaultDateFormat);
   const cc = config.cc.map((template) =>
     renderTemplateString(moduleName, template, rawData, outputs, deps.defaultDateFormat),
   );
   const subject = renderTemplateString(moduleName, config.subject, rawData, outputs, deps.defaultDateFormat);
+
+  if (deps.dryRun) {
+    console.log(`[dry-run] ${moduleName} : ${config.draft_only ? 'créerait un brouillon' : 'enverrait un mail'} à "${to}", sujet "${subject}".`);
+    const output: MailOutput = { subject, url: '(dry-run)', attachments: [], createdAt: new Date().toISOString() };
+    context.outputs[moduleName] = output;
+    await deps.sheetsWriter.updateOutput(context.rowNumber, moduleName, output);
+    return;
+  }
+
+  const resolvedAttachments = await resolveAttachments(moduleName, config, context, deps);
   const bodyTemplate = config.template_html ?? readFileSync(config.template_html_path!, 'utf-8');
   const htmlBody = renderTemplateString(moduleName, bodyTemplate, rawData, outputs, deps.defaultDateFormat);
 

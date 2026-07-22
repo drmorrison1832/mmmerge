@@ -55,6 +55,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     folderCache: new Map(),
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
+    dryRun: false,
     ...overrides,
   };
   return { deps, updateOutput };
@@ -259,5 +260,24 @@ describe('runMailInstance', () => {
     );
 
     expect(draftsCreate).toHaveBeenCalledOnce();
+  });
+
+  it("n'appelle aucune API Google en mode dry-run, écrit une sortie synthétique", async () => {
+    const { gmail, draftsCreate } = createMockGmail();
+    const { drive, list } = createMockDrive([]);
+    const { deps, updateOutput } = createDeps({ gmail, drive, dryRun: true });
+    const context = baseContext();
+
+    await runMailInstance('mail[0]', baseConfig({ attach: 'generated', generated: ['pdf[0]'] }), context, deps);
+
+    expect(draftsCreate).not.toHaveBeenCalled();
+    expect(list).not.toHaveBeenCalled();
+    expect(mailOutputOf(context, 'mail[0]')).toEqual({
+      subject: 'Votre contrat',
+      url: '(dry-run)',
+      attachments: [],
+      createdAt: expect.any(String),
+    });
+    expect(updateOutput).toHaveBeenCalledWith(5, 'mail[0]', context.outputs['mail[0]']);
   });
 });

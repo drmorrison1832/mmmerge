@@ -14,8 +14,17 @@ export async function runGdocsInstance(
   deps: PipelineDeps,
 ): Promise<void> {
   const { rawData } = context;
-  const folderId = await resolveOutputFolderId(moduleName, deps, config, rawData);
   const filename = renderTemplateString(moduleName, config.output_filename, rawData, context.outputs, deps.defaultDateFormat);
+
+  if (deps.dryRun) {
+    console.log(`[dry-run] ${moduleName} : générerait "${filename}" depuis le template "${config.template_id}".`);
+    const output: FileOutput = { filename, url: '(dry-run)', createdAt: new Date().toISOString() };
+    context.outputs[moduleName] = output;
+    await deps.sheetsWriter.updateOutput(context.rowNumber, moduleName, output);
+    return;
+  }
+
+  const folderId = await resolveOutputFolderId(moduleName, deps, config, rawData);
 
   const { data: copied } = await deps.drive.files.copy({
     fileId: config.template_id,

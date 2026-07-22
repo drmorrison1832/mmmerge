@@ -27,9 +27,9 @@ function createMockSheetsClient(initialRanges: Record<string, unknown[][]> = {})
   return { sheets, cells, get, batchUpdate };
 }
 
-async function createWriter(initialRanges: Record<string, unknown[][]> = {}) {
+async function createWriter(initialRanges: Record<string, unknown[][]> = {}, dryRun = false) {
   const mock = createMockSheetsClient({ [`${SHEET_TAB}!1:1`]: [HEADERS], ...initialRanges });
-  const writer = await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB);
+  const writer = await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB, dryRun);
   return { writer, ...mock };
 }
 
@@ -95,17 +95,17 @@ describe('updateOutput', () => {
   });
 });
 
-describe('closeRow', () => {
-  const baseProfile: Config = {
-    sheetId: 'sheet-id',
-    sheetTabName: SHEET_TAB,
-    autoCreateFolders: true,
-    defaultDateFormat: 'd/M/yyyy',
-    gdocs: [],
-    pdf: [{ template_id: 't', output_folder: 'f', output_filename: 'n', name: 'Copie archives' }],
-    mail: [],
-  };
+const baseProfile: Config = {
+  sheetId: 'sheet-id',
+  sheetTabName: SHEET_TAB,
+  autoCreateFolders: true,
+  defaultDateFormat: 'd/M/yyyy',
+  gdocs: [],
+  pdf: [{ template_id: 't', output_folder: 'f', output_filename: 'n', name: 'Copie archives' }],
+  mail: [],
+};
 
+describe('closeRow', () => {
   it('écrit "Succès" quand context.error est absent', async () => {
     const { writer, cells } = await createWriter();
     await writer.closeRow({ rowNumber: 5, rawData: {}, outputs: {} }, baseProfile);
@@ -148,5 +148,32 @@ describe('closeRow', () => {
     await writer.closeRow({ rowNumber: 5, rawData: {}, outputs: {} }, baseProfile);
 
     expect(cells.has(`${SHEET_TAB}!B6`)).toBe(false);
+  });
+});
+
+describe('dry-run', () => {
+  it("n'écrit rien sur le Sheet quand dryRun est actif (markInitialRow)", async () => {
+    const { writer, cells, batchUpdate } = await createWriter({}, true);
+    await writer.markInitialRow(5);
+
+    expect(batchUpdate).not.toHaveBeenCalled();
+    expect(cells.has(`${SHEET_TAB}!B5`)).toBe(false);
+  });
+
+  it("n'écrit rien sur le Sheet quand dryRun est actif (closeRow)", async () => {
+    const { writer, batchUpdate } = await createWriter({}, true);
+    await writer.closeRow({ rowNumber: 5, rawData: {}, outputs: {} }, baseProfile);
+
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it('continue de lire normalement (updateOutput) même en dryRun', async () => {
+    const existing = { 'gdocs[0]': { filename: 'CDDU', url: 'https://x', createdAt: '2026-07-21T00:00:00Z' } };
+    const { writer, get, batchUpdate } = await createWriter({ [`${SHEET_TAB}!C5`]: [[JSON.stringify(existing)]] }, true);
+
+    await writer.updateOutput(5, 'pdf[0]', { filename: 'x', url: 'https://y', createdAt: '2026-07-21T00:01:00Z' });
+
+    expect(get).toHaveBeenCalled(); // la lecture reste réelle
+    expect(batchUpdate).not.toHaveBeenCalled(); // seule l'écriture est simulée
   });
 });

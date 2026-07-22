@@ -34,6 +34,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     folderCache: new Map(),
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
+    dryRun: false,
     ...overrides,
   };
   return { deps, updateOutput };
@@ -105,5 +106,21 @@ describe('runGdocsInstance', () => {
     await runGdocsInstance('gdocs[0]', baseConfig(), baseContext(), deps);
 
     expect(permissionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("n'appelle aucune API Google en mode dry-run, écrit une sortie synthétique", async () => {
+    const { drive, copy } = createMockDrive();
+    const { deps, updateOutput } = createDeps({ drive, dryRun: true });
+    const context = baseContext();
+
+    await runGdocsInstance('gdocs[0]', baseConfig(), context, deps);
+
+    expect(copy).not.toHaveBeenCalled();
+    expect(context.outputs['gdocs[0]']).toEqual({
+      filename: 'CDDU Dupont',
+      url: '(dry-run)',
+      createdAt: expect.any(String),
+    });
+    expect(updateOutput).toHaveBeenCalledWith(5, 'gdocs[0]', context.outputs['gdocs[0]']);
   });
 });
