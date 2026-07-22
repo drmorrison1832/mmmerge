@@ -33,6 +33,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err);
+  const verbose = process.argv.includes('--verbose');
+  if (verbose) {
+    console.error(err);
+  } else {
+    console.error(`Erreur : ${err instanceof Error ? err.message : String(err)}`);
+  }
   process.exit(1);
 });
