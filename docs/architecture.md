@@ -1,7 +1,9 @@
 # Architecture Technique : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-22 — v9
-> **Résumé des derniers changements :** Suite à une relecture externe du code. `orchestrator.ts` gagne `validateResourceAccessibility`-adjacent : `--list` (retourne la liste des lignes éligibles sans construire `PipelineDeps` ni marquer/traiter aucune ligne) et `printSummary` (appelée en fin de `runPipeline`, hors branches `--validate`/`--list`/liste vide). `cliFlags.ts` gagne la constante `HELP_TEMPLATES` (contenu statique, testé pour présence des sections clés) consommée par `--help-templates` dans `cli.ts`, traité avant même la lecture du nom de profil. `folderResolver.ts`/`mail.ts` : les erreurs d'ambiguïté (dossier / fichier externe) incluent désormais les IDs Drive des éléments en conflit (déjà présents dans la réponse `files.list`, aucun appel supplémentaire).
+> **Dernière mise à jour :** 2026-07-22 — v10
+> **Résumé des derniers changements :** Nouveaux modificateurs `prefix(texte)`/`suffix(texte)` dans `templateEngine.ts` (§3), génériques (tous types), conditionnés gratuitement par le court-circuit déjà existant pour cellule vide dans `resolveTagValue` (`applyModifiers` n'est jamais appelée pour une valeur vide). Le découpage des modificateurs (`parseModifiers`) passe d'un simple `.split(',')` à `splitModifiersRespectingParens`, conscient de la profondeur de parenthèses — ne coupe pas sur une virgule à l'intérieur de `prefix(...)`/`suffix(...)`, lève une `Erreur` explicite si les parenthèses ne s'équilibrent pas. Un `.trim()` uniforme (comme avant) reste suffisant : il ne touche que les extrémités de chaque modificateur déjà délimité par la virgule de plus haut niveau, jamais l'intérieur des parenthèses. Design initial envisagé (`prefix:`/`suffix:` sans parenthèses, contrainte de position "doit être en dernier" pour éviter l'ambiguïté du trim) abandonné avant d'être finalisé : la délimitation par parenthèses supprime cette contrainte entièrement.
+>
+> **Résumé v9 (2026-07-22) :** Suite à une relecture externe du code. `orchestrator.ts` gagne `validateResourceAccessibility`-adjacent : `--list` (retourne la liste des lignes éligibles sans construire `PipelineDeps` ni marquer/traiter aucune ligne) et `printSummary` (appelée en fin de `runPipeline`, hors branches `--validate`/`--list`/liste vide). `cliFlags.ts` gagne la constante `HELP_TEMPLATES` (contenu statique, testé pour présence des sections clés) consommée par `--help-templates` dans `cli.ts`, traité avant même la lecture du nom de profil. `folderResolver.ts`/`mail.ts` : les erreurs d'ambiguïté (dossier / fichier externe) incluent désormais les IDs Drive des éléments en conflit (déjà présents dans la réponse `files.list`, aucun appel supplémentaire).
 >
 > **Résumé v8 (2026-07-22) :** `MailOutput` (§4) gagne `draftOnly: boolean` (reflète `config.draft_only` de l'instance), écrit par `runMailInstance` dans les trois branches (dry-run, brouillon, envoi) — permet d'interpréter `url` sans consulter le profil. Documenté : le lien de brouillon (`#drafts?compose=<id>`) est fragile par nature (voir v7) — cesse de fonctionner si le brouillon est modifié/restauré après coup, l'ID de composition utilisé par l'UI Gmail moderne étant interne au client web et non dérivable depuis l'API (confirmé par recherche : aucune méthode connue pour le reconstruire à partir de `draft.id`/`message.id`). Retenu malgré tout plutôt qu'un lien générique vers le dossier Brouillons, qui n'apporterait aucune information utile.
 >
@@ -158,6 +160,10 @@ function applyModifiers(
       value = value.toUpperCase();
     } else if (modifier === 'lowercase') {
       value = value.toLowerCase();
+    } else if (modifier.startsWith('prefix(') && modifier.endsWith(')')) {
+      value = modifier.slice('prefix('.length, -1) + value;
+    } else if (modifier.startsWith('suffix(') && modifier.endsWith(')')) {
+      value = value + modifier.slice('suffix('.length, -1);
     } else {
       throw new ModuleError(moduleName, `Balise {{${name}}} : modificateur "${modifier}" inconnu`);
     }

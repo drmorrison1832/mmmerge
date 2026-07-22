@@ -32,6 +32,7 @@ describe('HELP_TEMPLATES', () => {
     expect(HELP_TEMPLATES).toContain('{{variable}}');
     expect(HELP_TEMPLATES).toContain('required');
     expect(HELP_TEMPLATES).toContain('format:<token>');
+    expect(HELP_TEMPLATES).toContain('prefix(texte)');
     expect(HELP_TEMPLATES).toContain('{{link:gdocs[0]}}');
   });
 });

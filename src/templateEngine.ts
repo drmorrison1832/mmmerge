@@ -53,6 +53,10 @@ function applyModifiers(
       value = value.toUpperCase();
     } else if (modifier === 'lowercase') {
       value = value.toLowerCase();
+    } else if (modifier.startsWith('prefix(') && modifier.endsWith(')')) {
+      value = modifier.slice('prefix('.length, -1) + value;
+    } else if (modifier.startsWith('suffix(') && modifier.endsWith(')')) {
+      value = value + modifier.slice('suffix('.length, -1);
     } else {
       throw new ModuleError(moduleName, `Balise {{${name}}} : modificateur "${modifier}" inconnu`);
     }
@@ -64,10 +68,38 @@ function applyModifiers(
   return value;
 }
 
-function parseModifiers(modifiersRaw: string | undefined): string[] {
+/**
+ * Découpe la liste de modificateurs sur les virgules, sauf celles à l'intérieur de
+ * parenthèses (contenu de prefix(...)/suffix(...)) — permet une virgule littérale dans
+ * ce contenu, ex: prefix(Bonjour, ). Erreur explicite si les parenthèses ne s'équilibrent pas.
+ */
+function splitModifiersRespectingParens(moduleName: string, name: string, modifiersRaw: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+
+  for (const char of modifiersRaw) {
+    if (char === '(') depth++;
+    if (char === ')') depth--;
+    if (char === ',' && depth === 0) {
+      parts.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  parts.push(current);
+
+  if (depth !== 0) {
+    throw new ModuleError(moduleName, `Balise {{${name}}} : parenthèses non équilibrées dans les modificateurs.`);
+  }
+
+  return parts;
+}
+
+function parseModifiers(moduleName: string, name: string, modifiersRaw: string | undefined): string[] {
   if (!modifiersRaw) return [];
-  return modifiersRaw
-    .split(',')
+  return splitModifiersRespectingParens(moduleName, name, modifiersRaw)
     .map((modifier) => modifier.trim())
     .filter((modifier) => modifier.length > 0);
 }
@@ -90,7 +122,7 @@ function resolveTagValue(
     throw new ModuleError(moduleName, `Balise {{${name}}} : type "${type}" inconnu`);
   }
 
-  const modifiers = parseModifiers(modifiersRaw);
+  const modifiers = parseModifiers(moduleName, name, modifiersRaw);
   const rawValue = rawData[name];
 
   // Cellule vide : court-circuite avant tout parsing (notamment le parsing de date,

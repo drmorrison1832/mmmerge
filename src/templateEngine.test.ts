@@ -92,6 +92,76 @@ describe('resolveTemplateTags', () => {
   });
 });
 
+describe('prefix(...)/suffix(...) (modificateurs conditionnels — appliqués seulement si la valeur est non vide)', () => {
+  it('prefix(...) ajoute un préfixe uniquement si la valeur est non vide', () => {
+    const [withValue] = resolveTemplateTags('gdocs[0]', '{{Prenom2[prefix( )]}}', { Prenom2: 'Sébastien' }, 'd/M/yyyy');
+    const [withoutValue] = resolveTemplateTags('gdocs[0]', '{{Prenom2[prefix( )]}}', { Prenom2: '' }, 'd/M/yyyy');
+
+    expect(withValue.value).toBe(' Sébastien');
+    expect(withoutValue.value).toBe('');
+  });
+
+  it('suffix(...) ajoute un suffixe uniquement si la valeur est non vide', () => {
+    const [tag] = resolveTemplateTags('gdocs[0]', '{{Tel[suffix( (mobile))]}}', { Tel: '0600000000' }, 'd/M/yyyy');
+    expect(tag.value).toBe('0600000000 (mobile)');
+  });
+
+  it("résout le cas d'origine (prénoms multiples optionnels, sans espaces doubles ni orphelins)", () => {
+    const template = '{{prenom1}}{{prenom2[prefix( )]}}{{prenom3[prefix( )]}} {{nom}}';
+    const render = (rawData: Record<string, string>) => {
+      const tags = resolveTemplateTags('gdocs[0]', template, rawData, 'd/M/yyyy');
+      return tags.reduce((acc, tag) => acc.replace(tag.fullMatch, tag.value), template);
+    };
+
+    expect(render({ prenom1: 'Étienne', prenom2: 'Sébastien', prenom3: 'Paul', nom: 'Dupont' })).toBe(
+      'Étienne Sébastien Paul Dupont',
+    );
+    expect(render({ prenom1: 'Étienne', prenom2: '', prenom3: 'Paul', nom: 'Dupont' })).toBe('Étienne Paul Dupont');
+    expect(render({ prenom1: 'Étienne', prenom2: 'Sébastien', prenom3: '', nom: 'Dupont' })).toBe(
+      'Étienne Sébastien Dupont',
+    );
+  });
+
+  it("se combine avec d'autres modificateurs, y compris à une position non finale — l'ordre change le résultat", () => {
+    const [prefixFirst] = resolveTemplateTags('gdocs[0]', '{{Nom[prefix(monsieur ), uppercase]}}', { Nom: 'dupont' }, 'd/M/yyyy');
+    const [uppercaseFirst] = resolveTemplateTags('gdocs[0]', '{{Nom[uppercase, prefix(monsieur )]}}', { Nom: 'dupont' }, 'd/M/yyyy');
+
+    expect(prefixFirst.value).toBe('MONSIEUR DUPONT'); // préfixe ajouté avant uppercase → lui aussi majusculé
+    expect(uppercaseFirst.value).toBe('monsieur DUPONT'); // préfixe ajouté après uppercase → jamais majusculé
+  });
+
+  it('tolère une virgule littérale à l\'intérieur du contenu', () => {
+    const [tag] = resolveTemplateTags('gdocs[0]', '{{Nom[prefix(Bonjour, )]}}', { Nom: 'Marie' }, 'd/M/yyyy');
+    expect(tag.value).toBe('Bonjour, Marie');
+  });
+
+  it('prefix(...) et suffix(...) se combinent librement, et tolèrent des parenthèses dans leur propre contenu', () => {
+    const [tag] = resolveTemplateTags(
+      'gdocs[0]',
+      '{{Tel[prefix(Tél: ), suffix( (mobile))]}}',
+      { Tel: '0600000000' },
+      'd/M/yyyy',
+    );
+    expect(tag.value).toBe('Tél: 0600000000 (mobile)');
+  });
+
+  it('contenu vide toléré (no-op)', () => {
+    const [tag] = resolveTemplateTags('gdocs[0]', '{{Nom[prefix()]}}', { Nom: 'Marie' }, 'd/M/yyyy');
+    expect(tag.value).toBe('Marie');
+  });
+
+  it('lève une erreur explicite si les parenthèses ne sont pas équilibrées', () => {
+    expect(() =>
+      resolveTemplateTags('gdocs[0]', '{{Nom[prefix(M. ]}}', { Nom: 'x' }, 'd/M/yyyy'),
+    ).toThrow(/parenthèses non équilibrées/);
+  });
+
+  it("prefix(...) seul (sans required) n'affecte pas une cellule vide", () => {
+    const [tag] = resolveTemplateTags('gdocs[0]', '{{Nom[prefix(M. )]}}', { Nom: '' }, 'd/M/yyyy');
+    expect(tag.value).toBe('');
+  });
+});
+
 describe('renderTemplateString', () => {
   it('substitue les balises directement dans la chaîne', () => {
     const result = renderTemplateString('mail[0]', 'Bonjour {{Prenom}}, à bientôt.', { Prenom: 'Marie' }, {}, 'd/M/yyyy');

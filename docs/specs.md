@@ -1,7 +1,9 @@
 # Spécifications Techniques & Fonctionnelles : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-22 — v7
-> **Résumé des derniers changements :** Suite à une relecture externe du code. Nouveau flag `--list` (§5) : liste les lignes éligibles (numéro + statut actuel) sans exécuter le pipeline. Nouveau flag `--help-templates` (§5) : affiche la syntaxe des balises, utilisable sans profil. Résumé final systématique en fin d'exécution (lignes traitées, documents/PDF/emails générés, ligne en cause si arrêt sur erreur) — hors `--validate`/`--list`. Messages d'ambiguïté de dossier/fichier externe (§3, §7) incluent désormais les IDs Drive des éléments en conflit.
+> **Dernière mise à jour :** 2026-07-22 — v8
+> **Résumé des derniers changements :** Nouveaux modificateurs génériques `prefix(texte)`/`suffix(texte)` (§3) : ajoutent `texte` avant/après la valeur d'une balise, uniquement si la cellule n'est pas vide — résout le problème des espaces doubles/orphelins quand plusieurs champs optionnels se suivent dans un template (ex: prénoms multiples). Contenu pris à la lettre, peut contenir une virgule, utilisable à n'importe quelle position dans la liste de modificateurs.
+>
+> **Résumé v7 (2026-07-22) :** Suite à une relecture externe du code. Nouveau flag `--list` (§5) : liste les lignes éligibles (numéro + statut actuel) sans exécuter le pipeline. Nouveau flag `--help-templates` (§5) : affiche la syntaxe des balises, utilisable sans profil. Résumé final systématique en fin d'exécution (lignes traitées, documents/PDF/emails générés, ligne en cause si arrêt sur erreur) — hors `--validate`/`--list`. Messages d'ambiguïté de dossier/fichier externe (§3, §7) incluent désormais les IDs Drive des éléments en conflit.
 >
 > **Résumé v6 (2026-07-22) :** `mmm_outputs` : chaque entrée `mail[i]` gagne un champ `draftOnly` (reflète `draft_only` de l'instance), pour interpréter `url` sans consulter le profil (§1). Le lien de brouillon (`#drafts?compose=<id>`) est documenté comme fragile — cesse de fonctionner si le brouillon est modifié/restauré après coup, limite de la plateforme Gmail plutôt qu'un défaut MMMerge ; retenu quand même car aucune alternative (lien générique vers le dossier Brouillons) n'apporte d'information utile.
 >
@@ -114,11 +116,22 @@ Syntaxe : `{{variable}}`, `{{variable[modificateurs]}}`, ou `{{variable:type[mod
 - Colonne présente, cellule vide, avec `required` → `Erreur` immédiate.
 - Modificateur inconnu, ou incompatible avec le type déclaré → `Erreur` de configuration du template.
 - Les modificateurs sont appliqués **dans l'ordre où ils apparaissent** dans la liste — l'ordre d'écriture change le résultat (ex: `[lowercase, capitalize]` normalise la casse puis capitalise, ce qui diffère de `[capitalize, lowercase]`).
-- **Génériques** (tous types) : `required`, `uppercase`, `lowercase`, `capitalize` (met en majuscule la première lettre de chaque mot, sans modifier le reste — gère correctement les caractères accentués, ex: `"élodie"` → `"Élodie"`).
+- **Génériques** (tous types) : `required`, `uppercase`, `lowercase`, `capitalize` (met en majuscule la première lettre de chaque mot, sans modifier le reste — gère correctement les caractères accentués, ex: `"élodie"` → `"Élodie"`), `prefix(texte)`/`suffix(texte)` (ajoute `texte` avant/après la valeur — voir ci-dessous).
 - **Type `string`** : `initial` (premier caractère + point, toujours en majuscule).
 - **Type `date`** : `format:<token>` (ex: `MMMM`, `yyyy`, `MM`, `dd`), locale française par défaut. Si aucun `format:...` n'est présent, le format par défaut de l'application (`defaultDateFormat`, voir §4) est utilisé — ce n'est pas une erreur de l'omettre.
 
 Exemple : `{{nom:string[required, uppercase]}}` `{{pronom:string[required, uppercase, initial]}}` `{{date:date[required, format:MMMM, lowercase]}}` `{{date:date[required, format:yyyy]}}` → `DUPONT M. juillet 2026`.
+
+### Modificateurs conditionnels `prefix(texte)` / `suffix(texte)`
+
+Ajoutent `texte` avant/après la valeur résolue de la balise, **uniquement si cette valeur n'est pas vide** (aucun effet, y compris sur une cellule vide sans `required` — le résultat reste `""`). Objectif : chaîner des champs optionnels sans laisser d'espace double ou orphelin quand l'un d'eux est vide.
+
+- Le contenu entre parenthèses est pris **à la lettre**, espaces compris (`prefix( )` ajoute exactement un espace) — jamais retouché par la normalisation des espaces autour des virgules qui s'applique aux autres modificateurs.
+- Peut contenir une virgule littérale (`prefix(Bonjour, )`).
+- Parenthèses non équilibrées dans la liste de modificateurs → `Erreur` de configuration du template.
+- Peut apparaître à n'importe quelle position dans la liste ; comme tout modificateur, l'ordre d'écriture compte (`[prefix(M. ), uppercase]` majuscule aussi le préfixe, `[uppercase, prefix(M. )]` non).
+
+Exemple (prénoms multiples optionnels) : `{{prenom1}}{{prenom2[prefix( )]}}{{prenom3[prefix( )]}} {{nom}}` — avec `prenom2` vide, produit `Étienne Paul Dupont` (pas `Étienne  Paul Dupont`).
 
 ### Référencer un lien déjà généré (`{{link:...}}`)
 

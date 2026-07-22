@@ -20,6 +20,12 @@ Type "date" :
   format:<token>   - format date-fns (ex: MMMM, yyyy, d/M/yyyy), locale française
                      sans "format:", utilise defaultDateFormat du profil
 
+prefix(texte) / suffix(texte) :
+  ajoute "texte" avant/après la valeur, uniquement si la cellule n'est pas vide —
+  pratique pour chaîner des champs optionnels sans espace double ni orphelin.
+  Contenu pris à la lettre (espaces compris), peut contenir une virgule, peut
+  apparaître à n'importe quelle position dans la liste de modificateurs.
+
 Les modificateurs s'appliquent dans l'ordre d'écriture — [lowercase, capitalize] ≠ [capitalize, lowercase].
 
 Référence à une sortie déjà générée (mail uniquement — to/cc/subject/corps) :
@@ -29,6 +35,10 @@ Référence à une sortie déjà générée (mail uniquement — to/cc/subject/c
 Exemple :
   {{nom:string[required, uppercase]}} {{date:date[required, format:MMMM yyyy]}}
   → DUPONT juillet 2026
+
+Exemple (champs optionnels sans espaces doubles) :
+  {{prenom1}}{{prenom2[prefix( )]}}{{prenom3[prefix( )]}} {{nom}}
+  avec prenom2 vide → Étienne Paul Dupont (pas "Étienne  Paul Dupont")
 `;
 
 export function parseLines(raw: unknown): number[] | undefined {

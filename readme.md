@@ -125,10 +125,13 @@ Détail complet du format (schéma Zod, toutes les clés, règles de validation)
 - Génériques (tous types) : `required`, `uppercase`, `lowercase`, `capitalize`.
 - Type `string` : `initial` (première lettre + point).
 - Type `date` : `format:<token>` (tokens `date-fns`, ex: `MMMM`, `yyyy`), locale française. Sans `format:`, utilise `defaultDateFormat` du profil.
+- `prefix(texte)` / `suffix(texte)` : ajoute `texte` avant/après la valeur, **uniquement si la cellule n'est pas vide** — pratique pour chaîner des champs optionnels sans laisser d'espace double ou orphelin. Le contenu est pris à la lettre (espaces compris), peut contenir une virgule, et peut apparaître à n'importe quelle position dans la liste de modificateurs.
 - Les modificateurs s'appliquent dans l'ordre d'écriture — `[lowercase, capitalize]` ≠ `[capitalize, lowercase]`.
 - `{{link:gdocs[0]}}` / `{{link:pdf[0]}}` (mail uniquement — `to`, `cc`, `subject`, corps) : résout l'URL d'une instance déjà générée pour cette ligne.
 
 Exemple : `{{nom:string[required, uppercase]}} {{date:date[required, format:MMMM yyyy]}}` → `DUPONT juillet 2026`.
+
+Exemple (champs optionnels sans espaces doubles) : `{{prenom1}}{{prenom2[prefix( )]}}{{prenom3[prefix( )]}} {{nom}}` avec `prenom2` vide → `Étienne Paul Dupont` (pas `Étienne  Paul Dupont`).
 
 ## Utilisation
 
