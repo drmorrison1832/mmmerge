@@ -1,22 +1,34 @@
 #!/usr/bin/env node
 /**
  * Point d'entrée : parsing mri, dispatch vers l'orchestrateur. Voir architecture.md §1, §6.
- * STUB — à implémenter.
  */
-import mri from "mri";
+import mri from 'mri';
+import { loadConfig } from './config/loader.js';
+import { runPipeline, type CliFlags } from './pipeline/orchestrator.js';
+import { parseLines } from './cliFlags.js';
 
 async function main(): Promise<void> {
-  const args = mri(process.argv.slice(2));
-  const profileName = args._[0];
+  const argv = process.argv.slice(2);
+  const args = mri(argv, { boolean: ['dry-run', 'force', 'validate', 'verbose'] });
+  const profileArg = args._[0];
 
-  if (!profileName) {
-    console.error("Usage: mmmerge <profil> [options]");
+  if (profileArg === undefined) {
+    console.error('Usage: mmmerge <profil> [options]');
     process.exit(1);
   }
+  const profileName = String(profileArg);
 
-  console.log(`[stub] mmmerge démarré avec le profil "${profileName}"`);
-  console.log("[stub] Pipeline pas encore implémenté.");
-  process.exit(0);
+  const cliFlags: CliFlags = {
+    dryRun: Boolean(args['dry-run']),
+    force: Boolean(args.force),
+    verbose: Boolean(args.verbose),
+    validate: Boolean(args.validate),
+    lines: parseLines(args.lines),
+  };
+
+  const config = loadConfig(profileName, argv);
+  const exitCode = await runPipeline(config, cliFlags);
+  process.exit(exitCode);
 }
 
 main().catch((err) => {
