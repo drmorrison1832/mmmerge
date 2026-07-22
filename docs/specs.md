@@ -1,7 +1,9 @@
 # Spécifications Techniques & Fonctionnelles : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-05 — v3
-> **Résumé des derniers changements :** Nouvelle colonne réservée `mmm_last_run` (horodatage lisible, format `d/M/yyyy HH:mm`), mise à jour à chaque écriture touchant la ligne — lève l'ambiguïté d'un `En cours d'exécution` qui pourrait dater de quelques secondes comme de plusieurs jours. Chaque entrée de `mmm_outputs` gagne un champ `createdAt` (ISO 8601). La règle de nettoyage avant ré-exécution change : **tous** les fichiers gDocs/PDF référencés dans `mmm_outputs` sont mis à la corbeille en une fois au début du traitement de la ligne (pas seulement ceux sur le point d'être régénérés), pour éviter les résidus si une instance a été retirée du profil entre deux exécutions. Les brouillons Gmail de tentatives précédentes ne sont volontairement pas nettoyés (voir §3, §6). `capitalize` corrigé pour les caractères accentués. Précision sur le comportement si une colonne `date` contient une valeur non numérique (cellule en texte brut).
+> **Dernière mise à jour :** 2026-07-22 — v4
+> **Résumé des derniers changements :** Précisions issues de la première implémentation complète. `--lines` ciblant une ligne hors du tableau de données (ou la ligne d'en-tête) lève désormais une erreur explicite plutôt que d'être ignoré silencieusement (§5). Portée exacte de `--validate` précisée : vérifie l'authentification, les colonnes système du Sheet et l'accessibilité Drive des `template_id`/`output_folder_id` — jamais `output_folder` (chemin dynamique), dont la résolution nécessite une ligne réelle (§5). Nouveau flag `--init-columns` pour créer les colonnes système manquantes plutôt que d'échouer (§1, §5) — pas de création automatique silencieuse, pour ne pas masquer une vraie erreur de configuration (mauvais onglet/Sheet). Purge (§2) : l'échec de mise à la corbeille d'un fichier déjà absent/inaccessible est loggé et n'interrompt pas la régénération de la ligne. URL d'un mail envoyé (`draft_only: false`) précisée par symétrie avec l'exemple brouillon existant (§1) — **non vérifiée en conditions réelles**.
+>
+> **Résumé v3 (2026-07-05) :** Nouvelle colonne réservée `mmm_last_run` (horodatage lisible, format `d/M/yyyy HH:mm`), mise à jour à chaque écriture touchant la ligne — lève l'ambiguïté d'un `En cours d'exécution` qui pourrait dater de quelques secondes comme de plusieurs jours. Chaque entrée de `mmm_outputs` gagne un champ `createdAt` (ISO 8601). La règle de nettoyage avant ré-exécution change : **tous** les fichiers gDocs/PDF référencés dans `mmm_outputs` sont mis à la corbeille en une fois au début du traitement de la ligne (pas seulement ceux sur le point d'être régénérés), pour éviter les résidus si une instance a été retirée du profil entre deux exécutions. Les brouillons Gmail de tentatives précédentes ne sont volontairement pas nettoyés (voir §3, §6). `capitalize` corrigé pour les caractères accentués. Précision sur le comportement si une colonne `date` contient une valeur non numérique (cellule en texte brut).
 
 ## 1. Convention de Nommage du Tableur (Google Sheets)
 
@@ -25,6 +27,10 @@ Les colonnes de données libres servent de balises (ex: une colonne `Nom` rempla
   }
 }
 ```
+
+**Note sur l'exemple `mail[0]`** : l'URL `#drafts/...` correspond à un brouillon (`draft_only: true`). Pour un mail réellement envoyé (`draft_only: false`), l'URL suit le même principe sous la forme `https://mail.google.com/mail/u/0/#sent/<id>` — **par symétrie avec le cas brouillon, non vérifiée en conditions réelles**.
+
+**Colonnes système absentes du Sheet** : par défaut, une `Erreur` explicite liste toutes les colonnes `mmm_*` manquantes d'un coup. Le flag `--init-columns` (§5) permet de les créer automatiquement (ajoutées en fin d'en-tête) plutôt que d'échouer — pas de création automatique par défaut, pour ne pas masquer silencieusement une vraie erreur de configuration (mauvais `sheetTabName`/`sheetId`).
 
 **Attention aux zéros non significatifs** : les valeurs des cellules sont lues sans mise en forme (nombre brut plutôt que texte affiché), ce qui garantit une lecture fiable des dates quel que soit leur affichage — mais une colonne contenant des codes à zéros non significatifs (ex: un code postal `01000`) doit être formatée en "Texte brut" dans Google Sheets, sinon le zéro de tête serait perdu à la lecture.
 
@@ -56,7 +62,7 @@ Après la création de chaque fichier (gDocs, PDF) ou l'envoi/mise en brouillon 
 
 - Une ligne est éligible si sa colonne `mmm_status` est vide, vaut exactement `En cours d'exécution`, ou commence par `Erreur:` — liste blanche stricte. Toute autre valeur exclut la ligne, silencieusement.
 - Cette règle permet une **exclusion manuelle intentionnelle** (ex: `skip`, ou un texte descriptif) directement dans le Sheet — distincte du filtre de condition par profil (§6, non implémenté).
-- Une ligne éligible déclenche une **ré-exécution intégrale et systématique de tout le pipeline depuis le début**. Avant toute nouvelle génération, **tous** les fichiers Drive référencés par des entrées `gdocs[i]`/`pdf[i]` déjà présentes dans `mmm_outputs` sont envoyés à la corbeille en une fois (pas seulement ceux dont l'instance correspondante existe encore dans le profil actuel — une instance retirée du profil depuis la dernière exécution ne doit pas laisser de résidu). `mmm_outputs` est ensuite réinitialisé à `{}` avant que la ligne ne recommence. Un avertissement est loggé pour chaque fichier ainsi mis à la corbeille.
+- Une ligne éligible déclenche une **ré-exécution intégrale et systématique de tout le pipeline depuis le début**. Avant toute nouvelle génération, **tous** les fichiers Drive référencés par des entrées `gdocs[i]`/`pdf[i]` déjà présentes dans `mmm_outputs` sont envoyés à la corbeille en une fois (pas seulement ceux dont l'instance correspondante existe encore dans le profil actuel — une instance retirée du profil depuis la dernière exécution ne doit pas laisser de résidu). `mmm_outputs` est ensuite réinitialisé à `{}` avant que la ligne ne recommence. Un avertissement est loggé pour chaque fichier ainsi mis à la corbeille. Si la mise à la corbeille d'un fichier échoue (ex: déjà supprimé manuellement entre deux exécutions), l'échec est loggé mais **n'interrompt pas** la ligne — la régénération se poursuit normalement.
 - Les brouillons/emails déjà créés par une instance `mail[i]` lors d'une exécution précédente ne sont **pas** nettoyés (voir §3, §6) : relancer plusieurs fois une ligne avec `draft_only: true` peut laisser plusieurs brouillons dans Gmail.
 
 ### `--force`
@@ -169,9 +175,10 @@ Syntaxe générale : `--[clé]` ou `--[clé]=[valeur]`, réservée aux **paramè
 ## 5. Commandes CLI (Système)
 
 - `--dry-run` : Simule l'exécution (affichage console, avertissements compris) sans écrire sur Google Drive, Sheets ou Gmail.
-- `--lines=4,14,15` : Restreint le traitement aux lignes spécifiées.
+- `--lines=4,14,15` : Restreint le traitement aux lignes spécifiées. Une ligne demandée qui n'existe pas dans le tableau de données (hors bornes, ou ligne 1 — l'en-tête) déclenche une `Erreur` explicite avant même l'authentification, plutôt que d'être silencieusement ignorée.
 - `--force` : Force la ré-exécution intégrale sur les lignes ciblées, quel que soit leur `mmm_status`.
-- `--validate` : Vérifie la cohérence et l'accessibilité de la config (y compris les références `generated`/`{{link:...}}` des instances Mail) sans lancer le pipeline.
+- `--validate` : Vérifie, **sans lire une seule ligne de données du Sheet** : la cohérence statique du profil (déjà assurée par la validation Zod à chaque lancement — références `generated`/`{{link:...}}` des instances Mail comprises), l'accessibilité du Sheet et de ses colonnes `mmm_*`, et l'accessibilité Drive de chaque `template_id`/`output_folder_id` référencé par `gdocs[]`/`pdf[]`. Toutes les ressources introuvables sont listées ensemble. `output_folder` (chemin dynamique avec balises) n'est **pas** vérifié : sa résolution dépend d'une ligne réelle, hors du périmètre de `--validate`.
+- `--init-columns` : Crée automatiquement les colonnes système `mmm_status`/`mmm_outputs`/`mmm_last_run` si elles sont absentes de l'en-tête du Sheet (ajoutées en fin de ligne 1), au lieu de lever une `Erreur`. Sans ce flag, des colonnes manquantes sont toujours une `Erreur` explicite (les listant toutes) — pas de création automatique par défaut.
 - `--verbose` : Détail technique complet des appels API en console.
 
 ---

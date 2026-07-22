@@ -1,7 +1,23 @@
 # Architecture Technique : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-05 — v5
-> **Résumé des derniers changements :** `applyModifiers` (`capitalize`) corrigée pour les caractères accentués (regex Unicode `\p{L}` au lieu de `\w`). `parseSheetDate` valide désormais que la valeur brute est numérique, avec un message d'erreur explicite sinon. La corbeille avant régénération devient une purge globale en début de ligne (tous les fichiers de `mmm_outputs` existant, pas seulement les instances sur le point d'être régénérées), suivie d'une réinitialisation de `mmm_outputs` à `{}`. `SheetsWriter` gagne la responsabilité de `mmm_last_run` (horodatage lisible, mis à jour à chaque écriture). `FileOutput`/`MailOutput` gagnent un champ `createdAt` (ISO 8601). Flux gDocs (§7) explicité pour montrer l'écriture incrémentale entre remplissage et partage, cohérent avec §3.
+> **Dernière mise à jour :** 2026-07-22 — v6
+> **Résumé des derniers changements :** Implémentation complète (tous les modules, précédemment stubs). Ajouts issus de cette implémentation, non prévus par les versions précédentes de ce document :
+> - **`PipelineDeps`** (`pipeline/deps.ts`, nouveau) : dépendances partagées par `gdocs.ts`/`pdf.ts`/`mail.ts`, construites une seule fois par exécution par l'orchestrateur (clients Google, `SheetsWriter`, cache de dossiers "par exécution", `defaultDateFormat`, `autoCreateFolders`, `dryRun`, `verbose`).
+> - **`--dry-run`** : chaque module du pipeline (`gdocs`/`pdf`/`mail`) résout les champs purs (nom de fichier, destinataires…) puis court-circuite avant tout appel Drive/Docs/Gmail, écrivant une sortie synthétique (`url: '(dry-run)'`). `SheetsWriter` simule ses écritures (`writeCells` en no-op loggé) tout en conservant ses lectures réelles.
+> - **`--init-columns`** (nouveau flag) : crée les colonnes système `mmm_*` manquantes (ajoutées en fin d'en-tête) au lieu de lever une erreur — voir §5, §6.
+> - **`--validate`** étendu : vérifie aussi l'accessibilité Drive des `template_id`/`output_folder_id` référencés (§6).
+> - **`cliFlags.ts`** (nouveau) : `parseLines` extrait de `cli.ts` pour rester testable — importer `cli.ts` déclenche `main()` (c'est un script, pas un module réutilisable).
+> - **`googleDocsHelpers.ts`** (nouveau, `pipeline/modules/`) : logique partagée par `gdocs.ts`/`pdf.ts` (résolution du dossier de sortie, remplissage des balises, `resolveShareSettings`, `driveRole`).
+> - **`mimeMessage.ts`** (nouveau, `pipeline/modules/`) : construction manuelle du message MIME pour Gmail (`raw`), logique pure séparée de `mail.ts`.
+> - Racine de résolution de dossiers Drive (`folderResolver.ts`) : "Mon Drive" (`root`) pour le premier segment d'un chemin comme `Contrats/2026`. Ambiguïté (plusieurs dossiers identiques au même niveau) → `Erreur`, par cohérence avec la règle déjà explicite pour `external` (specs.md §3).
+> - `driveRole` (`googleDocsHelpers.ts`) : `reader`/`commenter` inchangés, `editor` → `writer` (rôles natifs de l'API Drive).
+> - URL d'un brouillon Gmail : `data.id` (l'identifiant du brouillon retourné par `drafts.create`), pas `data.message.id` — **non vérifié en conditions réelles**.
+> - `rawData` (construit par l'orchestrateur) inclut aussi les colonnes réservées `mmm_*`, sans filtrage — rien ne les distingue des colonnes libres à ce stade.
+> - "Ligne suivante" pour l'enchaînement `markInitialRow`/`closeRow` (§3, §5) = la prochaine ligne **éligible** de la liste déjà filtrée, pas nécessairement `rowNumber + 1`.
+> - `--verbose` implémenté seulement au niveau de l'orchestrateur (ligne/instance en cours) — pas encore instrumenté à l'intérieur des modules pour chaque appel API individuel. Sans incidence sur le comportement (`--verbose` ne change que la verbosité), mais une implémentation partielle.
+> - Emplacement du fichier de profil : `configs/<nom-du-profil>.json` (§6) — déduit du dossier `configs/` et de l'usage `mmmerge <profil>`, jamais explicité avant cette implémentation.
+>
+> **Résumé v5 (2026-07-05) :** `applyModifiers` (`capitalize`) corrigée pour les caractères accentués (regex Unicode `\p{L}` au lieu de `\w`). `parseSheetDate` valide désormais que la valeur brute est numérique, avec un message d'erreur explicite sinon. La corbeille avant régénération devient une purge globale en début de ligne (tous les fichiers de `mmm_outputs` existant, pas seulement les instances sur le point d'être régénérées), suivie d'une réinitialisation de `mmm_outputs` à `{}`. `SheetsWriter` gagne la responsabilité de `mmm_last_run` (horodatage lisible, mis à jour à chaque écriture). `FileOutput`/`MailOutput` gagnent un champ `createdAt` (ISO 8601). Flux gDocs (§7) explicité pour montrer l'écriture incrémentale entre remplissage et partage, cohérent avec §3.
 
 ## 1. Stack Technique
 
@@ -26,6 +42,7 @@ mmmerge/
 │   ├── auth.ts                # flux OAuth2, lecture/écriture de credentials.json et token.json
 │   ├── sheetsWriter.ts        # seul point d'écriture vers l'API Sheets (statuts, mmm_outputs, mmm_last_run)
 │   ├── utils.ts               # utilitaires partagés (ex: extractDriveFileId)
+│   ├── cliFlags.ts            # parsing de valeurs de flags nécessitant conversion (ex: --lines), séparé de cli.ts pour rester testable
 │   ├── templateEngine.ts      # résolution des balises {{variable}} — par tag et en chaîne finale
 │   ├── folderResolver.ts      # résolution de chemins de dossiers Drive dynamiques, avec cache
 │   ├── config/
@@ -33,11 +50,14 @@ mmmerge/
 │   │   └── loader.ts          # fusion CLI > profil > défaut, puis validation
 │   └── pipeline/
 │       ├── orchestrator.ts    # exécute les 3 phases dans l'ordre, pour chaque ligne éligible
+│       ├── deps.ts            # PipelineDeps : dépendances partagées par les modules, construites une fois par exécution
 │       ├── rowContext.ts      # définition du type RowContext
 │       └── modules/
-│           ├── gdocs.ts       # génération des instances gDocs + resolveShareSettings
-│           ├── pdf.ts         # génération des instances PDF (cycle temporaire interne)
-│           └── mail.ts        # composition/envoi des instances Mail + résolution de leurs pièces jointes
+│           ├── gdocs.ts               # génération des instances gDocs + resolveShareSettings
+│           ├── pdf.ts                 # génération des instances PDF (cycle temporaire interne)
+│           ├── mail.ts                # composition/envoi des instances Mail + résolution de leurs pièces jointes
+│           ├── googleDocsHelpers.ts   # logique partagée gdocs/pdf : dossier de sortie, remplissage des balises, partage
+│           └── mimeMessage.ts         # construction du message MIME brut pour Gmail (raw), logique pure
 ├── dist/                      # sortie de compilation (`tsc`) — code JS généré, jamais modifié à la main
 │   └── cli.js                 # version compilée de src/cli.ts, ciblée par le champ "bin" (voir ci-dessous)
 ├── configs/                   # profils JSON de l'utilisateur
@@ -198,7 +218,7 @@ async function resolveShareSettings(
 }
 ```
 
-`driveRole` traduit `reader`/`commenter`/`editor` vers les rôles Drive natifs. Échec en cours de boucle → permissions déjà accordées restent en place. Le fichier lui-même est déjà tracé dans `mmm_outputs` avant cet appel, donc un échec ici n'orpheline jamais le fichier.
+`driveRole` traduit `reader`/`commenter`/`editor` vers les rôles Drive natifs : `reader`→`reader`, `commenter`→`commenter` (inchangés), `editor`→`writer` (seul le nom diffère). Échec en cours de boucle → permissions déjà accordées restent en place. Le fichier lui-même est déjà tracé dans `mmm_outputs` avant cet appel, donc un échec ici n'orpheline jamais le fichier.
 
 ### Résolution des pièces jointes par instance Mail
 
@@ -224,7 +244,16 @@ async function resolveAttachmentsForInstance(
 }
 ```
 
-`resolveExternalFiles` reste à esquisser en code au moment de l'implémentation.
+`resolveExternalFiles` : résout `externalFolder` via `folderResolver.resolveFolderPath` (autoCreate forcé à `false`), résout chaque entrée de `external` via `renderTemplateString`, détecte les doublons de noms résolus, puis un `drive.files.list` par nom recherché (0 ou plusieurs résultats → `Erreur`).
+
+### Composition du message (Gmail, `mimeMessage.ts`)
+
+L'API Gmail n'offre pas de méthode haut niveau pour composer un message avec pièces jointes : `users.drafts.create`/`users.messages.send` attendent un message RFC 2822 complet, encodé en base64url, dans le champ `raw`. `mimeMessage.ts` construit ce message brut (logique pure, sans appel réseau) :
+- Sujet encodé en `=?UTF-8?B?<base64>?=` (RFC 2047), systématiquement — valide même pour un sujet purement ASCII, évite de détecter au cas par cas.
+- Corps HTML et chaque pièce jointe en base64 (`Content-Transfer-Encoding: base64`), lignes limitées à 76 caractères (RFC 2045).
+- Contenu des pièces jointes téléchargé via `drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' })`, bufferisé puis encodé en base64.
+- Message final encodé en base64url (`toBase64Url`) pour le champ `raw`, requis par l'API Gmail.
+- `draft_only: true` → `users.drafts.create`, URL `mmm_outputs` = `#drafts/<data.id>` (l'ID du brouillon, pas `data.message.id` — **non vérifié en conditions réelles**). `draft_only: false` → `users.messages.send`, URL = `#sent/<data.id>` — **inféré par symétrie, non vérifié**.
 
 ### Étapes de l'orchestrateur
 
@@ -232,8 +261,9 @@ async function resolveAttachmentsForInstance(
 2. S'authentifie (§2).
 3. Détermine la liste des lignes à traiter (filtre structurel + `--lines`/`--force`).
 4. Écrit `En cours d'exécution` (+ `mmm_last_run`) sur la première ligne. Liste vide → sortie propre (code `0`).
-5. Pour chaque ligne : purge les sorties existantes, construit un `RowContext` (`outputs: {}`), annote chaque instance avec son identifiant technique, puis exécute dans l'ordre : instances `gdocs[]` (création → écriture incrémentale → `resolveShareSettings` si configuré), instances `pdf[]` (création → écriture incrémentale), instances `mail[]` (composition/envoi → écriture incrémentale). Toute erreur interrompt la ligne et le script (§8). Succès complet → `SheetsWriter.closeRow` final.
-6. `--dry-run` : respecté individuellement par chaque module et `SheetsWriter`.
+5. Pour chaque ligne : purge les sorties existantes, construit un `RowContext` (`outputs: {}`), annote chaque instance avec son identifiant technique, puis exécute dans l'ordre : instances `gdocs[]` (création → écriture incrémentale → `resolveShareSettings` si configuré), instances `pdf[]` (création → écriture incrémentale), instances `mail[]` (composition/envoi → écriture incrémentale). Toute erreur interrompt la ligne et le script (§8). Succès complet → `SheetsWriter.closeRow` final, qui ouvre aussi la ligne suivante (`markInitialRow` fusionné dans le même appel) — "ligne suivante" désigne la prochaine ligne **éligible** de la liste déjà filtrée à l'étape 3, pas nécessairement `rowNumber + 1`.
+6. `--dry-run` : respecté individuellement par chaque module et `SheetsWriter`. Concrètement, chaque module (`gdocs`/`pdf`/`mail`) résout d'abord ses champs purs (nom de fichier, destinataires…, sans appel API), puis court-circuite avant tout appel Drive/Docs/Gmail réel si `dryRun` est actif, en écrivant une sortie synthétique (`url: '(dry-run)'`) via `SheetsWriter` — lui-même en écriture simulée (lectures réelles conservées).
+7. `--verbose` : implémenté au niveau de l'orchestrateur uniquement (log à chaque changement de ligne/instance en cours) — pas encore instrumenté à l'intérieur des modules pour chaque appel API individuel. `--verbose` ne changeant que la verbosité (jamais le comportement), cette implémentation partielle n'affecte pas la correction du pipeline.
 
 ---
 
@@ -254,6 +284,8 @@ type RowContext = {
 ```
 
 `createdAt` (`new Date().toISOString()`) est en ISO 8601, contrairement à `mmm_last_run` (lecture humaine) — cette valeur n'est jamais lue directement à l'œil.
+
+`rawData` (construit par l'orchestrateur à la lecture du Sheet) contient **toutes** les colonnes de la ligne, y compris les colonnes réservées `mmm_*` — aucun filtrage. Rien n'empêche donc une balise `{{mmm_status}}` dans un template, même si ça n'a pas d'usage prévu.
 
 ### Ce que chaque module lit et écrit
 
@@ -418,9 +450,19 @@ const ProfileSchema = z.object({
 });
 ```
 
-Toutes ces validations sont **statiques** — détectables via `--validate` sans lire une seule ligne du Sheet.
+Toutes ces validations sont **statiques** — détectables via `--validate` sans lire une seule ligne du Sheet. Elles s'exécutent à chaque lancement (au chargement de la config, via `loadConfig`), pas seulement avec `--validate`.
 
-### Emplacement des fichiers, `--validate` — inchangés
+### Emplacement du fichier de profil
+
+`configs/<nom-du-profil>.json` (`loader.ts`) — un fichier par profil, nommé exactement comme l'argument positionnel de la commande (`mmmerge <profil>`).
+
+### `--validate`
+
+En plus des validations statiques ci-dessus (déjà systématiques), `--validate` authentifie, résout les colonnes `mmm_*` via `SheetsWriter.create`, puis vérifie l'accessibilité Drive de chaque `template_id`/`output_folder_id` référencé par `gdocs[]`/`pdf[]` (`validateResourceAccessibility`, `orchestrator.ts`) — un `drive.files.get` par ressource, en parallèle, toutes les ressources introuvables étant rapportées ensemble plutôt qu'au premier échec. Ne lit aucune ligne de données : `output_folder` (chemin dynamique) n'est donc pas vérifiable par cette voie.
+
+### `--init-columns`
+
+Si une ou plusieurs colonnes `mmm_status`/`mmm_outputs`/`mmm_last_run` sont absentes de l'en-tête, `SheetsWriter.create` lève par défaut une erreur les listant toutes. Avec `--init-columns`, elles sont ajoutées à la fin de la ligne d'en-tête (`values.update` sur la plage `<onglet>!1:1`) plutôt que de lever une erreur — respecte `--dry-run` (log de simulation, aucune écriture). Choix délibéré de ne pas les créer automatiquement par défaut : une colonne manquante peut aussi bien signifier un premier lancement sur ce Sheet qu'une erreur de configuration (mauvais `sheetTabName`/`sheetId`), que l'on ne veut pas masquer silencieusement.
 
 ---
 
@@ -428,15 +470,15 @@ Toutes ces validations sont **statiques** — détectables via `--validate` sans
 
 ### Résolution de chemins dynamiques (`folderResolver.ts`)
 
-Substitution de balises via `renderTemplateString`, cache par exécution, création automatique des segments manquants selon `autoCreateFolders` (défaut `true`).
+Substitution de balises via `renderTemplateString`, cache par exécution, création automatique des segments manquants selon `autoCreateFolders` (défaut `true`). Le premier segment est résolu depuis la racine "Mon Drive" (`root`) — un chemin comme `Contrats/2026` part donc de la racine du Drive du compte authentifié, pas d'un dossier configurable ailleurs. Si plusieurs dossiers portent le même nom au même niveau (ambiguïté), `Erreur` — même règle que pour la recherche de fichiers externes (§3, §7 ci-dessous), bien que specs.md ne l'explicite que pour ce second cas.
 
 ### Copie du template (instances gDocs)
 
-`files.copy` → `documents.batchUpdate` (via `resolveTemplateTags`) → **écriture incrémentale de `mmm_outputs`/`mmm_last_run`** (§5) → si `share` configuré, `resolveShareSettings` (§3). L'écriture incrémentale précède délibérément le partage.
+`files.copy` → `documents.batchUpdate` (via `resolveTemplateTags`) → **écriture incrémentale de `mmm_outputs`/`mmm_last_run`** (§5) → si `share` configuré, `resolveShareSettings` (§3). L'écriture incrémentale précède délibérément le partage. URL stockée : `https://docs.google.com/document/d/<fileId>/edit` (format standard Google, non documenté ailleurs).
 
 ### Cycle interne des instances PDF
 
-`files.copy` (temporaire) → `documents.batchUpdate` → `files.export` (PDF) → `files.create` (destination finale) → `files.delete` (suppression du temporaire) → écriture incrémentale.
+`files.copy` (temporaire, nommé `[tmp] <nom final>`, pas de parent — racine Drive, sans conséquence puisqu'il est supprimé) → `documents.batchUpdate` → `files.export` (`mimeType: 'application/pdf'`, `responseType: 'stream'`) → `files.create` (destination finale, `media.body` = le flux exporté) → `files.delete` (suppression définitive du temporaire, pas une mise à la corbeille) → écriture incrémentale. URL stockée : `https://drive.google.com/file/d/<fileId>/view` — confirmée par l'exemple `mmm_outputs` de specs.md §1.
 
 ### Recherche des fichiers externes (résolution interne à chaque instance Mail)
 
