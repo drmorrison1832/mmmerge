@@ -9,7 +9,7 @@ import { parseLines } from './cliFlags.js';
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const args = mri(argv, { boolean: ['dry-run', 'force', 'validate', 'verbose'] });
+  const args = mri(argv, { boolean: ['dry-run', 'force', 'validate', 'verbose', 'init-columns'] });
   const profileArg = args._[0];
 
   if (profileArg === undefined) {
@@ -23,6 +23,7 @@ async function main(): Promise<void> {
     force: Boolean(args.force),
     verbose: Boolean(args.verbose),
     validate: Boolean(args.validate),
+    initColumns: Boolean(args['init-columns']),
     lines: parseLines(args.lines),
   };
 

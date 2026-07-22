@@ -51,20 +51,41 @@ export class SheetsWriter {
     sheetId: string,
     sheetTabName: string,
     dryRun = false,
+    initColumns = false,
   ): Promise<SheetsWriter> {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: sheetId,
       range: `${sheetTabName}!1:1`,
     });
-    const headers = data.values?.[0] ?? [];
+    let headers = data.values?.[0] ?? [];
+    const missing = RESERVED_COLUMNS.filter((name) => !headers.includes(name));
+
+    if (missing.length > 0) {
+      if (!initColumns) {
+        throw new Error(
+          `Colonnes système manquantes dans l'en-tête de l'onglet "${sheetTabName}" : ${missing.join(', ')}. ` +
+            `Ajoutez-les manuellement au Sheet, ou relancez avec --init-columns pour les créer automatiquement.`,
+        );
+      }
+
+      const newHeaders = [...headers, ...missing];
+      if (dryRun) {
+        console.log(`[dry-run] Colonnes système simulées : ${missing.join(', ')} (onglet "${sheetTabName}").`);
+      } else {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: sheetId,
+          range: `${sheetTabName}!1:1`,
+          valueInputOption: 'RAW',
+          requestBody: { values: [newHeaders] },
+        });
+        console.warn(`Colonnes système créées automatiquement : ${missing.join(', ')} (onglet "${sheetTabName}").`);
+      }
+      headers = newHeaders;
+    }
 
     const columns = {} as ColumnIndexes;
     for (const name of RESERVED_COLUMNS) {
-      const index = headers.findIndex((header) => header === name);
-      if (index === -1) {
-        throw new Error(`Colonne "${name}" introuvable dans l'en-tête de l'onglet "${sheetTabName}".`);
-      }
-      columns[name] = index;
+      columns[name] = headers.indexOf(name);
     }
 
     return new SheetsWriter(sheets, sheetId, sheetTabName, columns, dryRun);

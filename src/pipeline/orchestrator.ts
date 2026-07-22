@@ -17,6 +17,8 @@ export type CliFlags = {
   force: boolean;
   verbose: boolean;
   validate: boolean;
+  /** Crée les colonnes système mmm_* manquantes au lieu de lever une erreur. */
+  initColumns: boolean;
   /** Numéros de ligne (numérotation visuelle Sheets, ligne 1 = en-tête) demandés via --lines. */
   lines?: number[];
 };
@@ -77,6 +79,43 @@ async function readHiddenRowNumbers(
     if (meta.hiddenByUser || meta.hiddenByFilter) hidden.add(index + 1);
   });
   return hidden;
+}
+
+/**
+ * Vérifie que les template_id et output_folder_id référencés (gdocs[]/pdf[]) sont accessibles sur Drive.
+ * Ne dépend d'aucune ligne du Sheet — utilisé par --validate (specs.md §5 : "cohérence et accessibilité").
+ * output_folder (chemin dynamique) n'est pas vérifiable ici : sa résolution nécessite une ligne réelle.
+ */
+export async function validateResourceAccessibility(
+  drive: PipelineDeps['drive'],
+  profile: Config,
+): Promise<string[]> {
+  const problems: string[] = [];
+
+  const checkFile = async (fileId: string, label: string): Promise<void> => {
+    try {
+      await drive.files.get({ fileId, fields: 'id' });
+    } catch {
+      problems.push(`${label} : fichier "${fileId}" introuvable ou inaccessible sur Drive.`);
+    }
+  };
+
+  const instances = [
+    ...profile.gdocs.map((instance, index) => ({ instance, ref: `gdocs[${index}]` })),
+    ...profile.pdf.map((instance, index) => ({ instance, ref: `pdf[${index}]` })),
+  ];
+
+  await Promise.all(
+    instances.flatMap(({ instance, ref }) => {
+      const checks = [checkFile(instance.template_id, `${ref}.template_id`)];
+      if (instance.output_folder_id) {
+        checks.push(checkFile(instance.output_folder_id, `${ref}.output_folder_id`));
+      }
+      return checks;
+    }),
+  );
+
+  return problems;
 }
 
 export function determineEligibleRows(rows: SheetRow[], hiddenRowNumbers: Set<number>, cliFlags: CliFlags): SheetRow[] {
@@ -183,10 +222,22 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
   const docs = google.docs({ version: 'v1', auth });
   const gmail = google.gmail({ version: 'v1', auth });
 
-  const sheetsWriter = await SheetsWriter.create(sheets, profile.sheetId, profile.sheetTabName, cliFlags.dryRun);
+  const sheetsWriter = await SheetsWriter.create(
+    sheets,
+    profile.sheetId,
+    profile.sheetTabName,
+    cliFlags.dryRun,
+    cliFlags.initColumns,
+  );
 
   if (cliFlags.validate) {
-    console.log('Configuration valide, Sheet accessible (colonnes mmm_* présentes).');
+    const problems = await validateResourceAccessibility(drive, profile);
+    if (problems.length > 0) {
+      console.error('Configuration invalide :');
+      problems.forEach((problem) => console.error(`  - ${problem}`));
+      return 1;
+    }
+    console.log('Configuration valide : Sheet, colonnes mmm_*, templates et dossiers référencés accessibles.');
     return 0;
   }
 

@@ -23,8 +23,17 @@ function createMockSheetsClient(initialRanges: Record<string, unknown[][]> = {})
     },
   );
 
-  const sheets = { spreadsheets: { values: { get, batchUpdate } } } as unknown as import('googleapis').sheets_v4.Sheets;
-  return { sheets, cells, get, batchUpdate };
+  const update = vi.fn(
+    async ({ range, requestBody }: { range: string; requestBody: { values: unknown[][] } }) => {
+      cells.set(range, requestBody.values);
+      return { data: {} };
+    },
+  );
+
+  const sheets = {
+    spreadsheets: { values: { get, batchUpdate, update } },
+  } as unknown as import('googleapis').sheets_v4.Sheets;
+  return { sheets, cells, get, batchUpdate, update };
 }
 
 async function createWriter(initialRanges: Record<string, unknown[][]> = {}, dryRun = false) {
@@ -41,9 +50,40 @@ describe('SheetsWriter.create', () => {
     expect(writer).toBeInstanceOf(SheetsWriter);
   });
 
-  it('lève une erreur explicite si une colonne réservée est absente', async () => {
+  it('lève une erreur explicite listant toutes les colonnes manquantes, et rappelle --init-columns', async () => {
     const mock = createMockSheetsClient({ [`${SHEET_TAB}!1:1`]: [['Nom', 'mmm_status']] });
-    await expect(SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB)).rejects.toThrow(/mmm_outputs/);
+    await expect(SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB)).rejects.toThrow(
+      /mmm_outputs.*mmm_last_run.*--init-columns/s,
+    );
+  });
+
+  it('--init-columns : crée les colonnes manquantes en les ajoutant à la fin de l\'en-tête', async () => {
+    const mock = createMockSheetsClient({ [`${SHEET_TAB}!1:1`]: [['Nom', 'mmm_status']] });
+    const writer = await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB, false, true);
+
+    expect(mock.update).toHaveBeenCalledWith({
+      spreadsheetId: 'sheet-id',
+      range: `${SHEET_TAB}!1:1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['Nom', 'mmm_status', 'mmm_outputs', 'mmm_last_run']] },
+    });
+
+    // la nouvelle instance sait déjà où écrire (mmm_outputs en colonne C, index 2)
+    await writer.resetOutputs(5);
+    expect(mock.cells.get(`${SHEET_TAB}!C5`)).toEqual([['{}']]);
+  });
+
+  it('--init-columns + --dry-run : simule la création sans écrire', async () => {
+    const mock = createMockSheetsClient({ [`${SHEET_TAB}!1:1`]: [['Nom', 'mmm_status']] });
+    await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB, true, true);
+
+    expect(mock.update).not.toHaveBeenCalled();
+  });
+
+  it("--init-columns n'écrit rien si toutes les colonnes sont déjà présentes", async () => {
+    const mock = createMockSheetsClient({ [`${SHEET_TAB}!1:1`]: [HEADERS] });
+    await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB, false, true);
+    expect(mock.update).not.toHaveBeenCalled();
   });
 });
 

@@ -5,6 +5,7 @@ import {
   determineEligibleRows,
   purgeRowOutputs,
   processRow,
+  validateResourceAccessibility,
   runPipeline,
   type SheetRow,
   type CliFlags,
@@ -39,7 +40,7 @@ function makeRow(overrides: Partial<SheetRow> = {}): SheetRow {
 }
 
 function baseCliFlags(overrides: Partial<CliFlags> = {}): CliFlags {
-  return { dryRun: false, force: false, verbose: false, validate: false, ...overrides };
+  return { dryRun: false, force: false, verbose: false, validate: false, initColumns: false, ...overrides };
 }
 
 function baseProfile(overrides: Partial<Config> = {}): Config {
@@ -54,6 +55,53 @@ function baseProfile(overrides: Partial<Config> = {}): Config {
     ...overrides,
   };
 }
+
+describe('validateResourceAccessibility', () => {
+  function createMockDriveForFiles(existingFileIds: string[]) {
+    const get = vi.fn(async ({ fileId }: { fileId: string }) => {
+      if (!existingFileIds.includes(fileId)) throw new Error('404');
+      return { data: { id: fileId } };
+    });
+    const drive = { files: { get } } as unknown as drive_v3.Drive;
+    return { drive, get };
+  }
+
+  it('ne remonte aucun problème si tous les template_id/output_folder_id existent', async () => {
+    const drive = createMockDriveForFiles(['template-id', 'folder-id']).drive;
+    const problems = await validateResourceAccessibility(drive, baseProfile());
+    expect(problems).toEqual([]);
+  });
+
+  it('remonte un problème par ressource introuvable, avec la référence en clair', async () => {
+    const drive = createMockDriveForFiles([]).drive; // rien n'existe
+    const problems = await validateResourceAccessibility(drive, baseProfile());
+
+    expect(problems).toContainEqual(expect.stringContaining('gdocs[0].template_id'));
+    expect(problems).toContainEqual(expect.stringContaining('gdocs[0].output_folder_id'));
+  });
+
+  it('ne vérifie pas output_folder_id quand seul output_folder (chemin dynamique) est configuré', async () => {
+    const profile = baseProfile({
+      gdocs: [{ template_id: 'template-id', output_folder: 'Contrats/{{Annee}}', output_filename: 'x' }],
+    });
+    const { drive, get } = createMockDriveForFiles(['template-id']);
+    const problems = await validateResourceAccessibility(drive, profile);
+
+    expect(problems).toEqual([]);
+    expect(get).toHaveBeenCalledOnce(); // seulement template_id
+  });
+
+  it('vérifie aussi les instances pdf[]', async () => {
+    const profile = baseProfile({
+      pdf: [{ template_id: 'pdf-template', output_folder_id: 'pdf-folder', output_filename: 'x' }],
+    });
+    const drive = createMockDriveForFiles(['template-id', 'folder-id']).drive; // pdf-template/pdf-folder absents
+    const problems = await validateResourceAccessibility(drive, profile);
+
+    expect(problems).toContainEqual(expect.stringContaining('pdf[0].template_id'));
+    expect(problems).toContainEqual(expect.stringContaining('pdf[0].output_folder_id'));
+  });
+});
 
 describe('isStatusEligible', () => {
   it('accepte une cellule vide', () => expect(isStatusEligible('')).toBe(true));
@@ -269,8 +317,9 @@ describe('runPipeline (intégration)', () => {
     let nextId = 1;
     const copy = vi.fn(async () => ({ data: { id: `doc-${nextId++}` } }));
     const update = vi.fn(async () => ({ data: {} }));
-    const drive = { files: { copy, update } } as unknown as drive_v3.Drive;
-    return { drive, copy, update };
+    const get = vi.fn(async ({ fileId }: { fileId: string }) => ({ data: { id: fileId } })); // tout existe par défaut
+    const drive = { files: { copy, update, get } } as unknown as drive_v3.Drive;
+    return { drive, copy, update, get };
   }
 
   function createMockDocs() {
@@ -294,6 +343,22 @@ describe('runPipeline (intégration)', () => {
 
     expect(code).toBe(0);
     expect(spreadsheetsGet).not.toHaveBeenCalled();
+  });
+
+  it('--validate : code 1 si un template_id référencé est introuvable sur Drive', async () => {
+    const { sheets } = createMockSheetsClient([]);
+    mockState.sheetsClient = sheets;
+    const get = vi.fn(async () => {
+      throw new Error('404');
+    });
+    mockState.driveClient = { files: { get } } as unknown as drive_v3.Drive;
+    mockState.docsClient = createMockDocs().docs;
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const code = await runPipeline(baseProfile(), baseCliFlags({ validate: true }));
+
+    expect(code).toBe(1);
+    errorSpy.mockRestore();
   });
 
   it('aucune ligne éligible → code 0, aucune écriture', async () => {
