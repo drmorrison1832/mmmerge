@@ -145,9 +145,11 @@ node dist/cli.js <profil> [options]
 | `--force` | Ignore le filtre de statut : retraite les lignes ciblées quel que soit leur `mmm_status`. |
 | `--validate` | Vérifie la config, l'accessibilité du Sheet et des `template_id`/`output_folder_id` — sans lire de ligne de données ni lancer le pipeline. |
 | `--init-columns` | Crée les colonnes système `mmm_*` manquantes au lieu d'échouer. |
+| `--list` | Affiche les lignes éligibles (numéro + statut actuel) sans exécuter le pipeline — pour vérifier avant un lancement réel. |
 | `--verbose` | Détail technique supplémentaire en console (aucun effet sur le comportement). |
+| `--help-templates` | Affiche la syntaxe des balises (voir section précédente) et quitte — utilisable sans profil. |
 
-Code de sortie `0` (succès, ou aucune ligne à traiter) ou `1` (erreur — le statut est toujours écrit sur le Sheet avant l'arrêt).
+Code de sortie `0` (succès, ou aucune ligne à traiter) ou `1` (erreur — le statut est toujours écrit sur le Sheet avant l'arrêt). En fin d'exécution (hors `--validate`/`--list`), un résumé est affiché : lignes traitées, documents/PDF générés, emails composés, et la ligne en cause en cas d'arrêt sur erreur.
 
 ## Développement
 

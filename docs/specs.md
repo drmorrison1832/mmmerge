@@ -1,7 +1,9 @@
 # Spécifications Techniques & Fonctionnelles : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-22 — v6
-> **Résumé des derniers changements :** `mmm_outputs` : chaque entrée `mail[i]` gagne un champ `draftOnly` (reflète `draft_only` de l'instance), pour interpréter `url` sans consulter le profil (§1). Le lien de brouillon (`#drafts?compose=<id>`) est documenté comme fragile — cesse de fonctionner si le brouillon est modifié/restauré après coup, limite de la plateforme Gmail plutôt qu'un défaut MMMerge ; retenu quand même car aucune alternative (lien générique vers le dossier Brouillons) n'apporte d'information utile.
+> **Dernière mise à jour :** 2026-07-22 — v7
+> **Résumé des derniers changements :** Suite à une relecture externe du code. Nouveau flag `--list` (§5) : liste les lignes éligibles (numéro + statut actuel) sans exécuter le pipeline. Nouveau flag `--help-templates` (§5) : affiche la syntaxe des balises, utilisable sans profil. Résumé final systématique en fin d'exécution (lignes traitées, documents/PDF/emails générés, ligne en cause si arrêt sur erreur) — hors `--validate`/`--list`. Messages d'ambiguïté de dossier/fichier externe (§3, §7) incluent désormais les IDs Drive des éléments en conflit.
+>
+> **Résumé v6 (2026-07-22) :** `mmm_outputs` : chaque entrée `mail[i]` gagne un champ `draftOnly` (reflète `draft_only` de l'instance), pour interpréter `url` sans consulter le profil (§1). Le lien de brouillon (`#drafts?compose=<id>`) est documenté comme fragile — cesse de fonctionner si le brouillon est modifié/restauré après coup, limite de la plateforme Gmail plutôt qu'un défaut MMMerge ; retenu quand même car aucune alternative (lien générique vers le dossier Brouillons) n'apporte d'information utile.
 >
 > **Résumé v5 (2026-07-22) :** URLs Gmail (§1) vérifiées en conditions réelles et corrigées suite au test : un brouillon s'ouvre via `https://mail.google.com/mail/u/0/#drafts?compose=<id>` (pas `#drafts/<id>`, qui ne fonctionne plus dans l'UI Gmail actuelle), et `<id>` est l'identifiant du **message** sous-jacent, pas celui du brouillon lui-même. URL d'un mail envoyé (`#sent/<id>`) confirmée correcte telle quelle.
 >
@@ -142,7 +144,7 @@ Compose et envoie (ou met en brouillon) un ou plusieurs emails par ligne, avec l
 - `generated` (tableau de références **d'instances PDF uniquement**, ex: `["pdf[0]", "pdf[2]"]`) : référence directement des instances `pdf[]` déclarées dans **ce même profil**. Une référence à une instance `gdocs[]` est une `Erreur` de configuration (un gDoc ne s'attache pas). Validable statiquement (`--validate`) : chaque référence doit correspondre à une instance `pdf[]` existante, aucun doublon.
 - `externalFolder` (chaîne avec balises, requis si `external` est utilisé) : chemin du dossier Drive dans lequel chercher les fichiers désignés par `external` (résolution dynamique identique à `output_folder`, voir architecture.md §7 — mais toujours stricte, jamais soumise à `autoCreateFolders`).
 - `external` (tableau de chaînes avec balises) : chaque entrée se résout en un nom de fichier à chercher dans `externalFolder`.
-  - `Erreur` si un nom résolu est introuvable dans le dossier, si plusieurs fichiers y portent ce nom exact (ambiguïté), ou si deux entrées du tableau se résolvent au même nom (doublon).
+  - `Erreur` si un nom résolu est introuvable dans le dossier, si plusieurs fichiers y portent ce nom exact (ambiguïté — le message liste les IDs Drive des fichiers en conflit, pour identifier lequel supprimer/renommer), ou si deux entrées du tableau se résolvent au même nom (doublon).
 - Écrit `{"subject": ..., "url": ..., "attachments": [...], "createdAt": ...}` dans `mmm_outputs` sous la clé `mail[i]` (`attachments` = les `filename` effectivement joints, toutes sources confondues).
 
 ---
@@ -184,7 +186,13 @@ Syntaxe générale : `--[clé]` ou `--[clé]=[valeur]`, réservée aux **paramè
 - `--force` : Force la ré-exécution intégrale sur les lignes ciblées, quel que soit leur `mmm_status`.
 - `--validate` : Vérifie, **sans lire une seule ligne de données du Sheet** : la cohérence statique du profil (déjà assurée par la validation Zod à chaque lancement — références `generated`/`{{link:...}}` des instances Mail comprises), l'accessibilité du Sheet et de ses colonnes `mmm_*`, et l'accessibilité Drive de chaque `template_id`/`output_folder_id` référencé par `gdocs[]`/`pdf[]`. Toutes les ressources introuvables sont listées ensemble. `output_folder` (chemin dynamique avec balises) n'est **pas** vérifié : sa résolution dépend d'une ligne réelle, hors du périmètre de `--validate`.
 - `--init-columns` : Crée automatiquement les colonnes système `mmm_status`/`mmm_outputs`/`mmm_last_run` si elles sont absentes de l'en-tête du Sheet (ajoutées en fin de ligne 1), au lieu de lever une `Erreur`. Sans ce flag, des colonnes manquantes sont toujours une `Erreur` explicite (les listant toutes) — pas de création automatique par défaut.
+- `--list` : Affiche les lignes éligibles (numéro de ligne + `mmm_status` actuel) sans exécuter le pipeline — combine les mêmes filtres que l'exécution réelle (`--lines`, `--force`, lignes masquées).
 - `--verbose` : Détail technique complet des appels API en console.
+- `--help-templates` : Affiche la syntaxe des balises et modificateurs (voir §3) et quitte immédiatement — utilisable sans nom de profil.
+
+### Résumé de fin d'exécution
+
+Hors `--validate`/`--list`, chaque exécution (y compris `--dry-run`) affiche un résumé : nombre de lignes traitées avec succès, nombre de documents gDocs/PDF générés et d'emails composés (calculés à partir du nombre d'instances configurées × lignes traitées), et le numéro de la ligne en cause si le script s'est arrêté sur une `Erreur`.
 
 ---
 

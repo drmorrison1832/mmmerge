@@ -19,6 +19,8 @@ export type CliFlags = {
   validate: boolean;
   /** Crée les colonnes système mmm_* manquantes au lieu de lever une erreur. */
   initColumns: boolean;
+  /** Liste les lignes éligibles sans exécuter le pipeline. */
+  list: boolean;
   /** Numéros de ligne (numérotation visuelle Sheets, ligne 1 = en-tête) demandés via --lines. */
   lines?: number[];
 };
@@ -172,6 +174,16 @@ export async function purgeRowOutputs(
   await sheetsWriter.resetOutputs(row.rowNumber);
 }
 
+function printSummary(processedRows: number, profile: Config, failure?: { rowNumber: number }): void {
+  console.log('');
+  console.log('Résumé :');
+  console.log(`  Lignes traitées avec succès : ${processedRows}`);
+  if (profile.gdocs.length > 0) console.log(`  Documents gDocs générés : ${processedRows * profile.gdocs.length}`);
+  if (profile.pdf.length > 0) console.log(`  Fichiers PDF générés : ${processedRows * profile.pdf.length}`);
+  if (profile.mail.length > 0) console.log(`  Emails composés : ${processedRows * profile.mail.length}`);
+  if (failure) console.log(`  Erreur sur la ligne ${failure.rowNumber} — script interrompu.`);
+}
+
 /** Exécute les 3 phases pour une ligne. Retourne false si une erreur a interrompu la ligne (et le script). */
 export async function processRow(
   row: SheetRow,
@@ -245,6 +257,19 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
   const hiddenRowNumbers = await readHiddenRowNumbers(sheets, profile.sheetId, profile.sheetTabName);
   const eligibleRows = determineEligibleRows(rows, hiddenRowNumbers, cliFlags);
 
+  if (cliFlags.list) {
+    if (eligibleRows.length === 0) {
+      console.log('Aucune ligne éligible.');
+    } else {
+      console.log(`${eligibleRows.length} ligne(s) éligible(s) :`);
+      for (const row of eligibleRows) {
+        const statusInfo = row.status ? ` (statut actuel : "${row.status}")` : '';
+        console.log(`  - Ligne ${row.rowNumber}${statusInfo}`);
+      }
+    }
+    return 0;
+  }
+
   if (eligibleRows.length === 0) {
     console.log('Aucune ligne à traiter.');
     return 0;
@@ -264,12 +289,18 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
 
   await sheetsWriter.markInitialRow(eligibleRows[0].rowNumber);
 
+  let processedRows = 0;
   for (let i = 0; i < eligibleRows.length; i++) {
     const row = eligibleRows[i];
     const nextRow = eligibleRows[i + 1];
     const success = await processRow(row, profile, deps, nextRow?.rowNumber);
-    if (!success) return 1;
+    if (!success) {
+      printSummary(processedRows, profile, { rowNumber: row.rowNumber });
+      return 1;
+    }
+    processedRows++;
   }
 
+  printSummary(processedRows, profile);
   return 0;
 }

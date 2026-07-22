@@ -40,7 +40,15 @@ function makeRow(overrides: Partial<SheetRow> = {}): SheetRow {
 }
 
 function baseCliFlags(overrides: Partial<CliFlags> = {}): CliFlags {
-  return { dryRun: false, force: false, verbose: false, validate: false, initColumns: false, ...overrides };
+  return {
+    dryRun: false,
+    force: false,
+    verbose: false,
+    validate: false,
+    initColumns: false,
+    list: false,
+    ...overrides,
+  };
 }
 
 function baseProfile(overrides: Partial<Config> = {}): Config {
@@ -389,6 +397,83 @@ describe('runPipeline (intégration)', () => {
     expect(copy).toHaveBeenCalledTimes(2);
     expect(cells.get(`${SHEET_TAB}!B2`)).toEqual([['Succès']]);
     expect(cells.get(`${SHEET_TAB}!B3`)).toEqual([['Succès']]);
+  });
+
+  it('affiche un résumé (lignes traitées, gdocs/pdf/mail générés) après un succès', async () => {
+    const { sheets } = createMockSheetsClient([
+      ['Dupont', '', '', ''],
+      ['Martin', '', '', ''],
+    ]);
+    const { drive } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runPipeline(baseProfile(), baseCliFlags());
+
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('Lignes traitées avec succès : 2');
+    expect(logged).toContain('Documents gDocs générés : 2');
+    logSpy.mockRestore();
+  });
+
+  it('le résumé mentionne la ligne en échec quand le script est interrompu', async () => {
+    const { sheets } = createMockSheetsClient([['Dupont', '', '', '']]);
+    const { drive, copy } = createMockDrive();
+    copy.mockRejectedValueOnce(new Error('boom'));
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await runPipeline(baseProfile(), baseCliFlags());
+
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('Lignes traitées avec succès : 0');
+    expect(logged).toContain('Erreur sur la ligne 2 — script interrompu.');
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it('--list : affiche les lignes éligibles sans exécuter le pipeline', async () => {
+    const { sheets } = createMockSheetsClient([
+      ['Dupont', '', '', ''],
+      ['Martin', 'Erreur: gdocs[0] - x', '', ''],
+      ['Petit', 'skip', '', ''],
+    ]);
+    const { drive, copy } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const code = await runPipeline(baseProfile(), baseCliFlags({ list: true }));
+
+    expect(code).toBe(0);
+    expect(copy).not.toHaveBeenCalled();
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('2 ligne(s) éligible(s)');
+    expect(logged).toContain('Ligne 2');
+    expect(logged).toContain('Ligne 3');
+    expect(logged).not.toContain('Ligne 4'); // "skip" exclue
+    logSpy.mockRestore();
+  });
+
+  it('--list : indique clairement quand aucune ligne n\'est éligible', async () => {
+    const { sheets } = createMockSheetsClient([['Dupont', 'skip', '', '']]);
+    const { drive } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const code = await runPipeline(baseProfile(), baseCliFlags({ list: true }));
+
+    expect(code).toBe(0);
+    expect(logSpy.mock.calls.map((call) => call[0])).toContain('Aucune ligne éligible.');
+    logSpy.mockRestore();
   });
 
   it('une erreur sur la première ligne arrête le script et ne traite pas la suivante', async () => {

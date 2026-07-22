@@ -64,7 +64,11 @@ async function resolveExternalFiles(
       throw new ModuleError(moduleName, `Fichier externe "${name}" introuvable dans le dossier configuré.`);
     }
     if (matches.length > 1) {
-      throw new ModuleError(moduleName, `Fichier externe "${name}" : plusieurs fichiers identiques trouvés, ambigu.`);
+      const ids = matches.map((match) => match.id).join(', ');
+      throw new ModuleError(
+        moduleName,
+        `Fichier externe "${name}" : plusieurs fichiers identiques trouvés (IDs : ${ids}), ambigu.`,
+      );
     }
     const [match] = matches;
     if (!match.id) {

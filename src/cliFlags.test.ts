@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseLines } from './cliFlags.js';
+import { parseLines, HELP_TEMPLATES } from './cliFlags.js';
 
 describe('parseLines', () => {
   it('retourne undefined si --lines est absent', () => {
@@ -24,5 +24,14 @@ describe('parseLines', () => {
 
   it('lève une erreur explicite sur une valeur inférieure à 1', () => {
     expect(() => parseLines('0')).toThrow(/valeur invalide/);
+  });
+});
+
+describe('HELP_TEMPLATES', () => {
+  it('documente la syntaxe des balises et des modificateurs clés', () => {
+    expect(HELP_TEMPLATES).toContain('{{variable}}');
+    expect(HELP_TEMPLATES).toContain('required');
+    expect(HELP_TEMPLATES).toContain('format:<token>');
+    expect(HELP_TEMPLATES).toContain('{{link:gdocs[0]}}');
   });
 });

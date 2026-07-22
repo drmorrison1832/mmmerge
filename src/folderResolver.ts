@@ -27,7 +27,11 @@ async function resolveOrCreateSegment(
   const matches = data.files ?? [];
 
   if (matches.length > 1) {
-    throw new ModuleError(moduleName, `Dossier "${segmentName}" : plusieurs dossiers identiques trouvés, ambigu.`);
+    const ids = matches.map((match) => match.id).join(', ');
+    throw new ModuleError(
+      moduleName,
+      `Dossier "${segmentName}" : plusieurs dossiers identiques trouvés (IDs : ${ids}), ambigu.`,
+    );
   }
 
   if (matches.length === 1) {

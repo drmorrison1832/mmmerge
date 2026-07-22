@@ -5,11 +5,19 @@
 import mri from 'mri';
 import { loadConfig } from './config/loader.js';
 import { runPipeline, type CliFlags } from './pipeline/orchestrator.js';
-import { parseLines } from './cliFlags.js';
+import { parseLines, HELP_TEMPLATES } from './cliFlags.js';
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const args = mri(argv, { boolean: ['dry-run', 'force', 'validate', 'verbose', 'init-columns'] });
+  const args = mri(argv, {
+    boolean: ['dry-run', 'force', 'validate', 'verbose', 'init-columns', 'list', 'help-templates'],
+  });
+
+  if (args['help-templates']) {
+    console.log(HELP_TEMPLATES);
+    process.exit(0);
+  }
+
   const profileArg = args._[0];
 
   if (profileArg === undefined) {
@@ -24,6 +32,7 @@ async function main(): Promise<void> {
     verbose: Boolean(args.verbose),
     validate: Boolean(args.validate),
     initColumns: Boolean(args['init-columns']),
+    list: Boolean(args.list),
     lines: parseLines(args.lines),
   };
 
