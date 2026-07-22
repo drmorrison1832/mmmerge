@@ -53,10 +53,20 @@ export class SheetsWriter {
     dryRun = false,
     initColumns = false,
   ): Promise<SheetsWriter> {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: sheetId,
-      range: `${sheetTabName}!1:1`,
-    });
+    let data;
+    try {
+      ({ data } = await sheets.spreadsheets.values.get({
+        spreadsheetId: sheetId,
+        range: `${sheetTabName}!1:1`,
+      }));
+    } catch (err) {
+      const rawMessage = (err as Error).message.replace(/\.+$/, '');
+      throw new Error(
+        `Impossible d'accéder au Sheet "${sheetId}" (onglet "${sheetTabName}") : ${rawMessage}. ` +
+          `Vérifiez que sheetId/sheetTabName sont corrects dans le profil, que l'onglet existe, et que ce Sheet ` +
+          `est partagé avec le compte Google authentifié.`,
+      );
+    }
     let headers = data.values?.[0] ?? [];
     const missing = RESERVED_COLUMNS.filter((name) => !headers.includes(name));
 

@@ -57,6 +57,17 @@ describe('SheetsWriter.create', () => {
     );
   });
 
+  it("enrichit une erreur d'accès au Sheet (ID incorrect, non partagé, onglet inexistant...) avec du contexte actionnable", async () => {
+    const get = vi.fn(async () => {
+      throw new Error('Requested entity was not found.');
+    });
+    const sheets = { spreadsheets: { values: { get } } } as unknown as import('googleapis').sheets_v4.Sheets;
+
+    await expect(SheetsWriter.create(sheets, 'bad-sheet-id', SHEET_TAB)).rejects.toThrow(
+      /bad-sheet-id.*Contrats.*Requested entity was not found.*partagé/s,
+    );
+  });
+
   it('--init-columns : crée les colonnes manquantes en les ajoutant à la fin de l\'en-tête', async () => {
     const mock = createMockSheetsClient({ [`${SHEET_TAB}!1:1`]: [['Nom', 'mmm_status']] });
     const writer = await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB, false, true);
