@@ -1,7 +1,23 @@
 # Spécifications Techniques & Fonctionnelles : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-22 — v8
-> **Résumé des derniers changements :** Nouveaux modificateurs génériques `prefix(texte)`/`suffix(texte)` (§3) : ajoutent `texte` avant/après la valeur d'une balise, uniquement si la cellule n'est pas vide — résout le problème des espaces doubles/orphelins quand plusieurs champs optionnels se suivent dans un template (ex: prénoms multiples). Contenu pris à la lettre, peut contenir une virgule, utilisable à n'importe quelle position dans la liste de modificateurs.
+> **Dernière mise à jour :** 2026-07-31 — v16
+> **Résumé des derniers changements :** Nouveau champ `template_link` (§3, `gdocs`/`pdf` uniquement) : chaîne libre purement informative (typiquement l'URL du template), jamais lue par l'application — un aide-mémoire pour l'utilisateur. Correction d'une régression sur l'affichage des erreurs fatales : la trace de pile technique s'affichait par défaut au lieu d'un message clair (introduit par erreur lors du remplacement de `--verbose` par `--quiet` en v13), pouvant faire passer une simple erreur de saisie (ex: `--lines=1`, qui cible la ligne d'en-tête) pour un crash. Toujours `Erreur : <message>` désormais, quel que soit `--quiet`. Voir architecture.md v18 pour le détail technique.
+>
+> **Résumé v15 (2026-07-31) :** Deux corrections. (1) Module PDF (§3) : l'extension `.pdf` est désormais ajoutée automatiquement à `output_filename` si absente — un fichier créé sur Drive sans extension pouvait ne pas s'ouvrir correctement selon le client, et affectait aussi le nom de la pièce jointe d'un email qui joint ce PDF. (2) Nouveau modificateur `nospace` (§3), types `number`/`euro` : retire le séparateur de milliers du résultat, pour les cas où la valeur est destinée à être copiée-collée dans un champ qui rejette tout espace. Voir architecture.md v17 pour le détail technique des deux.
+>
+> **Résumé v14 (2026-07-30) :** Nouvelle clé `disable` (§3), commune à `gdocs`/`pdf`/`mail` : désactive une instance sans la retirer du profil ni décaler les index des autres — pensée pour désactiver temporairement un module en cours de configuration d'un profil. Une instance `mail[]` référençant (`generated`/`{{link:...}}`) une instance désactivée est une `Erreur` de configuration au chargement du profil (extension de la validation statique déjà existante pour une référence vers une instance inexistante), jamais une erreur en cours d'exécution. `--validate` (§5) ignore les instances désactivées lors de la vérification d'accessibilité Drive. Le résumé de fin d'exécution (§5) ne compte plus que les instances actives. Nouvelle notification de démarrage listant les modules désactivés, affichée même sous `--quiet`. Voir architecture.md v16 pour le détail technique.
+>
+> **Résumé v13 (2026-07-23) :** Suite à un signalement utilisateur (exécution figée sans aucun message console, impossible de savoir ce qui se passait) : le logging de progression en temps réel (§5), auparavant limité à `--verbose` (ligne/instance en cours uniquement, implémentation partielle documentée comme telle depuis v6), devient la **valeur par défaut**, et couvre désormais chaque appel réseau individuellement (pas seulement le niveau ligne/instance) — voir architecture.md v15 pour le détail technique. `--verbose` est remplacé par `--quiet`, qui restaure l'affichage minimal des versions précédentes.
+>
+> **Résumé v12 (2026-07-23) :** Nouveau type de balise `euro` (§3) : montant formaté selon la typographie française native (`Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' })`) — séparateur de milliers en espace fine insécable, espace insécable avant `€`, vérifiés en conditions réelles sur un document existant. Nombre de décimales automatique (0 si le montant est rond après arrondi au centime, 2 sinon), `format:<n>` disponible pour l'imposer explicitement. Voir architecture.md v14 pour le détail technique (arrondi robuste aux imprécisions flottantes, ex: `12,335` → `12,34 €`).
+>
+> **Résumé v11 (2026-07-23) :** Correction d'un bug (§1) : deux colonnes du Sheet portant le même titre étaient silencieusement fusionnées (la valeur de la dernière écrasant celle des précédentes dans `rawData`, ou dans la résolution des colonnes réservées `mmm_*`) au lieu de lever une erreur — voir architecture.md v13 pour le détail technique.
+>
+> **Résumé v10 (2026-07-23) :** Nouveau type de balise `number` (§3) : formate une valeur numérique de cellule en notation française (séparateur de milliers, virgule décimale — ex: `1123.43` → `1 123,43`) au lieu de la notation JS par défaut (point décimal, sans séparateur de milliers), qui apparaissait telle quelle dans les documents générés quand une cellule numérique était utilisée sans type déclaré (type `string` implicite). `format:<n>` (`n` = décimales fixes) disponible en complément. Se combine correctement avec `prefix(...)`/`suffix(...)` même sans `format:` explicite (ex: `{{brut_total:number[suffix( €)]}}` → `1 123,43 €`) — voir architecture.md v12 pour le détail d'un bug corrigé au passage sur l'ordre d'application des modificateurs.
+>
+> **Résumé v9 (2026-07-23) :** Correction d'un bug (constaté en test réel) : une balise invalide dans un template gDocs/PDF (ex: type inconnu) pouvait laisser un fichier orphelin sur Drive — une copie du template, sans aucun remplacement, jamais référencée dans `mmm_outputs` et donc jamais nettoyée par la purge (§2). Les balises du template sont désormais résolues **avant** toute copie ; une erreur de balise n'a donc plus aucun effet sur Drive. Voir architecture.md v11 pour le détail technique.
+>
+> **Résumé v8 (2026-07-22) :** Nouveaux modificateurs génériques `prefix(texte)`/`suffix(texte)` (§3) : ajoutent `texte` avant/après la valeur d'une balise, uniquement si la cellule n'est pas vide — résout le problème des espaces doubles/orphelins quand plusieurs champs optionnels se suivent dans un template (ex: prénoms multiples). Contenu pris à la lettre, peut contenir une virgule, utilisable à n'importe quelle position dans la liste de modificateurs.
 >
 > **Résumé v7 (2026-07-22) :** Suite à une relecture externe du code. Nouveau flag `--list` (§5) : liste les lignes éligibles (numéro + statut actuel) sans exécuter le pipeline. Nouveau flag `--help-templates` (§5) : affiche la syntaxe des balises, utilisable sans profil. Résumé final systématique en fin d'exécution (lignes traitées, documents/PDF/emails générés, ligne en cause si arrêt sur erreur) — hors `--validate`/`--list`. Messages d'ambiguïté de dossier/fichier externe (§3, §7) incluent désormais les IDs Drive des éléments en conflit.
 >
@@ -40,6 +56,8 @@ Les colonnes de données libres servent de balises (ex: une colonne `Nom` rempla
 **Note sur l'exemple `mail[0]`** : `draftOnly` reflète directement la valeur de `draft_only` de l'instance — permet de savoir comment interpréter `url` sans avoir à consulter le profil. Pour un brouillon (`draft_only: true`), l'URL suit le format `#drafts?compose=<id>` — **vérifiée en conditions réelles**, mais **fragile** : elle cesse de fonctionner si le brouillon est ensuite modifié ou restauré depuis la corbeille (l'ancien format `#drafts/<id>` ne fonctionne plus du tout dans l'UI Gmail actuelle). Cette fragilité est une limite de la plateforme Gmail, pas un bug MMMerge — le lien reste la meilleure option disponible juste après la génération. Pour un mail réellement envoyé (`draft_only: false`), l'URL `#sent/<id>` est stable — **vérifiée en conditions réelles**.
 
 **Colonnes système absentes du Sheet** : par défaut, une `Erreur` explicite liste toutes les colonnes `mmm_*` manquantes d'un coup. Le flag `--init-columns` (§5) permet de les créer automatiquement (ajoutées en fin d'en-tête) plutôt que d'échouer — pas de création automatique par défaut, pour ne pas masquer silencieusement une vraie erreur de configuration (mauvais `sheetTabName`/`sheetId`).
+
+**Deux colonnes portant le même titre dans l'en-tête** (réservées ou libres) → `Erreur` explicite avant toute lecture de ligne, listant le(s) titre(s) en double. Un titre dupliqué est ambigu par nature : `rawData` (construit par colonne, voir architecture.md §3) ne peut retenir qu'une valeur par nom de balise, et la résolution des colonnes réservées `mmm_*` ne peut pointer que sur un seul index — silencieux sinon (retiendrait arbitrairement la première occurrence). Les en-têtes vides ne comptent pas comme doublons entre eux.
 
 **Attention aux zéros non significatifs** : les valeurs des cellules sont lues sans mise en forme (nombre brut plutôt que texte affiché), ce qui garantit une lecture fiable des dates quel que soit leur affichage — mais une colonne contenant des codes à zéros non significatifs (ex: un code postal `01000`) doit être formatée en "Texte brut" dans Google Sheets, sinon le zéro de tête serait perdu à la lecture.
 
@@ -86,16 +104,20 @@ Pour le MVP, toute ligne masquée dans le Google Sheet est **ignorée**, avec un
 
 ## 3. Description des Modules
 
-### Nom et description (`name`, `description`) — communs à toutes les instances
+### Nom, description et désactivation (`name`, `description`, `disable`) — communs à toutes les instances
 
-Chaque instance (gDocs, PDF, ou Mail) accepte deux clés optionnelles, purement informatives :
+Chaque instance (gDocs, PDF, ou Mail) accepte trois clés optionnelles :
 - `name` (chaîne, ≤ 80 caractères) : un intitulé court et lisible (ex: `"CDDU en PDF"`, `"Mail notification manager"`). N'affecte **aucune** référence technique — `generated`, `{{link:...}}`, et les messages d'erreur continuent d'utiliser l'identifiant de position (`gdocs[0]`, `pdf[1]`...) comme référence stable. Quand `name` est renseigné, il s'affiche simplement **en plus** de cet identifiant dans les messages d'erreur.
 - `description` (chaîne, ≤ 500 caractères) : notes libres à l'usage de l'utilisateur, jamais utilisées par le système.
+- `disable` (booléen, défaut `false`) : contrairement aux deux clés précédentes, **affecte le comportement**. Une instance désactivée n'est jamais exécutée pour aucune ligne — aucun appel Drive/Docs/Gmail, aucune entrée écrite dans `mmm_outputs`. Elle **conserve son identifiant de position** (désactiver `gdocs[0]` ne renomme pas `gdocs[1]` en `gdocs[0]`), pour ne jamais invalider silencieusement une référence `generated`/`{{link:...}}` ailleurs dans le profil. Objectif principal : pouvoir désactiver temporairement un module en cours de configuration d'un profil (ex: template pas encore prêt), sans avoir à le retirer et le rajouter au tableau.
+  - Une instance `mail[]` référençant (`generated` ou `{{link:...}}`) une instance désactivée est une `Erreur` de **configuration**, levée au chargement du profil — jamais une erreur d'exécution au milieu d'une ligne. C'est une extension directe de la règle déjà existante pour une référence vers une instance inexistante (voir `{{link:...}}` ci-dessous) : `disable` étant un réglage fixe du profil (jamais dépendant d'une ligne du Sheet), la validité d'une référence vers une instance désactivée est toujours connue statiquement.
+  - Si toutes les instances de tous les modules sont désactivées (ou si tous les tableaux sont simplement vides), chaque ligne éligible se termine en `Succès` sans qu'aucune sortie ne soit générée — comportement déjà existant pour un profil sans aucune instance configurée, `disable` n'étant qu'une seconde façon d'y arriver.
 
 ### gDocs (tableau d'instances)
 
 Génère un ou plusieurs documents Google Docs remplis à partir d'un template, destinés à être consultés/édités directement, partagés, ou dont une version PDF sera générée séparément (voir §3, module PDF). Chaque instance copie son propre template Google Doc dans le dossier configuré, applique le mapping des balises (résolution "par tag", voir architecture.md §3), sauvegarde le document et écrit `{"filename": ..., "url": ..., "createdAt": ...}` dans `mmm_outputs` sous la clé `gdocs[i]`.
 
+- `template_link` (optionnel, chaîne) : **purement informatif, jamais lu par l'application**. Un aide-mémoire pour retrouver rapidement le template source (typiquement son URL Google Docs) directement depuis le profil, sans avoir à retrouver le document à partir du seul `template_id`. Disponible aussi sur les instances PDF (voir ci-dessous) ; absent des instances Mail, qui n'ont pas de template externe au sens Drive (`template_html`/`template_html_path` sont déjà le template).
 - `share` (optionnel) : configure le partage du document généré, indépendamment par email et par lien. Si `share` est présent, **au moins une** des deux clés suivantes doit l'être aussi (un `share` vide est une `Erreur` de configuration) :
   - `share.email` : `{ "addresses": [...] (balises autorisées), "permission": "reader" | "commenter" | "editor" }`.
   - `share.link` : `{ "permission": "reader" | "commenter" | "editor" }`.
@@ -104,6 +126,8 @@ Génère un ou plusieurs documents Google Docs remplis à partir d'un template, 
 ### PDF (tableau d'instances)
 
 Génère un ou plusieurs fichiers PDF, indépendamment du module gDocs — un PDF est le format à utiliser pour joindre un document à un email (un Google Doc natif ne peut pas être joint tel quel, voir §3, Mail). Chaque instance est indépendante des instances gDocs, avec son propre `template_id`. En interne : copie du template vers un Google Doc temporaire, remplissage des balises (même mécanisme que gDocs), export en PDF, suppression définitive du document temporaire (jamais visible dans `mmm_outputs`). Écrit `{"filename": ..., "url": ..., "createdAt": ...}` sous la clé `pdf[i]`.
+
+**Extension `.pdf` automatique** : `output_filename` n'a pas besoin d'inclure l'extension — elle est ajoutée automatiquement au nom résolu si absente (comparaison insensible à la casse, jamais de doublon si `.pdf`/`.PDF` est déjà présent). Exemple : `output_filename: "CDDU {{Nom}} {{Prenom}}"` avec `Nom = Dupont`, `Prenom = Étienne` → fichier nommé `CDDU Dupont Étienne.pdf`. Cette extension fait aussi partie de `filename` dans `mmm_outputs` et de l'`attachments` d'un email qui joint ce PDF (`generated`) — un fichier joint sans extension pouvait jusqu'ici ne pas s'ouvrir correctement selon le client mail. Ne s'applique qu'au module PDF ; le module gDocs n'a pas d'extension de fichier au sens classique (ce sont des documents Google natifs).
 
 Pas de clé `share` pour PDF (un PDF exporté n'a pas de notion d'édition collaborative à gérer).
 
@@ -119,8 +143,13 @@ Syntaxe : `{{variable}}`, `{{variable[modificateurs]}}`, ou `{{variable:type[mod
 - **Génériques** (tous types) : `required`, `uppercase`, `lowercase`, `capitalize` (met en majuscule la première lettre de chaque mot, sans modifier le reste — gère correctement les caractères accentués, ex: `"élodie"` → `"Élodie"`), `prefix(texte)`/`suffix(texte)` (ajoute `texte` avant/après la valeur — voir ci-dessous).
 - **Type `string`** : `initial` (premier caractère + point, toujours en majuscule).
 - **Type `date`** : `format:<token>` (ex: `MMMM`, `yyyy`, `MM`, `dd`), locale française par défaut. Si aucun `format:...` n'est présent, le format par défaut de l'application (`defaultDateFormat`, voir §4) est utilisé — ce n'est pas une erreur de l'omettre.
+- **Type `number`** : `format:<n>` (`n` = nombre entier de décimales fixes, ex: `format:2` → `1123` devient `1 123,00`). Sans `format:...`, format français par défaut (séparateur de milliers, virgule décimale — ex: `1123.43` → `1 123,43`), sans imposer de nombre de décimales fixe. Valeur non numérique → `Erreur` explicite (même logique que pour le type `date`).
+- **Type `euro`** : montant en euros, formaté selon la typographie française — séparateur de milliers en espace fine insécable (ex: `1234.5` → `1 234,50 €`), espace insécable avant `€`. Nombre de décimales **automatique** : 0 si le montant est rond (après arrondi au centime), 2 sinon (ex: `12` → `12 €`, `12,3` → `12,30 €`, `12,335` → `12,34 €`). `format:<n>` impose un nombre de décimales fixe, prioritaire sur cette règle automatique — la mise en forme (espaces, `€`) reste inchangée. Valeur non numérique → `Erreur` explicite (même logique que pour le type `number`).
+- **`nospace`** (types `number`/`euro` uniquement) : retire le séparateur de milliers du résultat (ex: `1234,56 €` au lieu de `1 234,56 €`) — motivé par des formulaires externes qui rejettent toute valeur copiée-collée contenant un espace, y compris invisible (espace fine insécable). Ne retire **que** le séparateur de milliers : l'espace insécable avant `€` reste. Contrairement à tous les autres modificateurs, `nospace` n'est **pas positionnel** — il se combine avec `format:<n>` dans n'importe quel ordre, avec le même résultat (les deux agissent sur le même appel de formatage sous-jacent, pas comme une transformation de texte appliquée après coup).
 
 Exemple : `{{nom:string[required, uppercase]}}` `{{pronom:string[required, uppercase, initial]}}` `{{date:date[required, format:MMMM, lowercase]}}` `{{date:date[required, format:yyyy]}}` → `DUPONT M. juillet 2026`.
+
+Exemple (`nospace`) : `{{brut_total:euro[nospace]}}` avec `brut_total = 1234.56` → `1234,56 €` (au lieu de `1 234,56 €`) ; `{{brut_total:euro[nospace, format:2]}}` avec `brut_total = 1234` → `1234,00 €`.
 
 ### Modificateurs conditionnels `prefix(texte)` / `suffix(texte)`
 
@@ -132,6 +161,8 @@ Ajoutent `texte` avant/après la valeur résolue de la balise, **uniquement si c
 - Peut apparaître à n'importe quelle position dans la liste ; comme tout modificateur, l'ordre d'écriture compte (`[prefix(M. ), uppercase]` majuscule aussi le préfixe, `[uppercase, prefix(M. )]` non).
 
 Exemple (prénoms multiples optionnels) : `{{prenom1}}{{prenom2[prefix( )]}}{{prenom3[prefix( )]}} {{nom}}` — avec `prenom2` vide, produit `Étienne Paul Dupont` (pas `Étienne  Paul Dupont`).
+
+Exemple (unité sur un nombre) : `{{brut_total:number[required, suffix( €)]}}` avec `brut_total = 1123.43` → `1 123,43 €`.
 
 ### Référencer un lien déjà généré (`{{link:...}}`)
 
@@ -197,15 +228,23 @@ Syntaxe générale : `--[clé]` ou `--[clé]=[valeur]`, réservée aux **paramè
 - `--dry-run` : Simule l'exécution (affichage console, avertissements compris) sans écrire sur Google Drive, Sheets ou Gmail.
 - `--lines=4,14,15` : Restreint le traitement aux lignes spécifiées. Une ligne demandée qui n'existe pas dans le tableau de données (hors bornes, ou ligne 1 — l'en-tête) déclenche une `Erreur` explicite avant même l'authentification, plutôt que d'être silencieusement ignorée.
 - `--force` : Force la ré-exécution intégrale sur les lignes ciblées, quel que soit leur `mmm_status`.
-- `--validate` : Vérifie, **sans lire une seule ligne de données du Sheet** : la cohérence statique du profil (déjà assurée par la validation Zod à chaque lancement — références `generated`/`{{link:...}}` des instances Mail comprises), l'accessibilité du Sheet et de ses colonnes `mmm_*`, et l'accessibilité Drive de chaque `template_id`/`output_folder_id` référencé par `gdocs[]`/`pdf[]`. Toutes les ressources introuvables sont listées ensemble. `output_folder` (chemin dynamique avec balises) n'est **pas** vérifié : sa résolution dépend d'une ligne réelle, hors du périmètre de `--validate`.
+- `--validate` : Vérifie, **sans lire une seule ligne de données du Sheet** : la cohérence statique du profil (déjà assurée par la validation Zod à chaque lancement — références `generated`/`{{link:...}}` des instances Mail comprises, y compris vers une instance désactivée), l'accessibilité du Sheet et de ses colonnes `mmm_*`, et l'accessibilité Drive de chaque `template_id`/`output_folder_id` référencé par `gdocs[]`/`pdf[]` **actives** (`disable` absent ou `false` — une instance désactivée n'a pas besoin de ressources valides, cas d'usage typique en cours de configuration d'un profil). Toutes les ressources introuvables sont listées ensemble. `output_folder` (chemin dynamique avec balises) n'est **pas** vérifié : sa résolution dépend d'une ligne réelle, hors du périmètre de `--validate`.
 - `--init-columns` : Crée automatiquement les colonnes système `mmm_status`/`mmm_outputs`/`mmm_last_run` si elles sont absentes de l'en-tête du Sheet (ajoutées en fin de ligne 1), au lieu de lever une `Erreur`. Sans ce flag, des colonnes manquantes sont toujours une `Erreur` explicite (les listant toutes) — pas de création automatique par défaut.
 - `--list` : Affiche les lignes éligibles (numéro de ligne + `mmm_status` actuel) sans exécuter le pipeline — combine les mêmes filtres que l'exécution réelle (`--lines`, `--force`, lignes masquées).
-- `--verbose` : Détail technique complet des appels API en console.
+- `--quiet` : Supprime le logging de progression en temps réel (actif par défaut — voir ci-dessous). Aucun effet sur le comportement.
 - `--help-templates` : Affiche la syntaxe des balises et modificateurs (voir §3) et quitte immédiatement — utilisable sans nom de profil.
+
+### Logging de progression en temps réel
+
+Par défaut, chaque action impliquant un appel réseau (authentification, lecture/écriture Sheets, copie/lecture/remplissage de template, export PDF, partage, résolution de dossier, recherche/téléchargement de pièce jointe, création de brouillon/envoi d'email...) est annoncée en console juste avant d'être lancée, puis confirmée (`: OK`) une fois résolue avec succès. Objectif : pouvoir déterminer précisément, à tout moment d'une exécution, ce que le script est en train de faire — notamment distinguer une exécution lente en cours d'une exécution réellement bloquée. En cas d'échec, seule l'annonce apparaît (jamais de `: OK`), ce qui situe déjà l'erreur avant même son message. `--quiet` supprime ces annonces et ne conserve que l'affichage minimal : avertissements (lignes masquées, purge, colonnes système créées...), résumé final, et ligne en cause en cas d'arrêt sur erreur — ce qui correspond à l'affichage par défaut des versions précédentes de MMMerge, avant l'introduction de ce logging.
 
 ### Résumé de fin d'exécution
 
-Hors `--validate`/`--list`, chaque exécution (y compris `--dry-run`) affiche un résumé : nombre de lignes traitées avec succès, nombre de documents gDocs/PDF générés et d'emails composés (calculés à partir du nombre d'instances configurées × lignes traitées), et le numéro de la ligne en cause si le script s'est arrêté sur une `Erreur`.
+Hors `--validate`/`--list`, chaque exécution (y compris `--dry-run`) affiche un résumé : nombre de lignes traitées avec succès, nombre de documents gDocs/PDF générés et d'emails composés (calculés à partir du nombre d'instances **actives** configurées × lignes traitées — une instance `disable: true` n'entre pas dans ce calcul), et le numéro de la ligne en cause si le script s'est arrêté sur une `Erreur`.
+
+### Notification des modules désactivés
+
+Avant toute authentification ou lecture du Sheet, s'il existe au moins une instance `disable: true` dans le profil (tous modules confondus), un message unique les liste (ex: `Module(s) désactivé(s) : gdocs[0], mail[1].`) — affiché même sous `--quiet`, pour qu'une instance manquante à l'exécution ne soit jamais une surprise silencieuse.
 
 ---
 

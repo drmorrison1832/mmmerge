@@ -10,7 +10,7 @@ import { parseLines, HELP_TEMPLATES } from './cliFlags.js';
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const args = mri(argv, {
-    boolean: ['dry-run', 'force', 'validate', 'verbose', 'init-columns', 'list', 'help-templates'],
+    boolean: ['dry-run', 'force', 'validate', 'quiet', 'init-columns', 'list', 'help-templates'],
   });
 
   if (args['help-templates']) {
@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   const cliFlags: CliFlags = {
     dryRun: Boolean(args['dry-run']),
     force: Boolean(args.force),
-    verbose: Boolean(args.verbose),
+    quiet: Boolean(args.quiet),
     validate: Boolean(args.validate),
     initColumns: Boolean(args['init-columns']),
     list: Boolean(args.list),
@@ -42,11 +42,10 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  const verbose = process.argv.includes('--verbose');
-  if (verbose) {
-    console.error(err);
-  } else {
-    console.error(`Erreur : ${err instanceof Error ? err.message : String(err)}`);
-  }
+  // Message seul, jamais la trace de pile brute — une erreur fatale a toujours un message
+  // explicite et actionnable dans cette application (ModuleError, erreurs de config, --lines...),
+  // une trace technique n'apporterait que du bruit. Indépendant de --quiet, qui ne concerne que
+  // le logging de progression en temps réel (pipeline/log.ts), pas la présentation des erreurs.
+  console.error(`Erreur : ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 });

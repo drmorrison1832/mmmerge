@@ -11,6 +11,7 @@ import { renderTemplateString } from '../../templateEngine.js';
 import { extractDriveFileId } from '../../utils.js';
 import { resolveFolderPath } from '../../folderResolver.js';
 import type { PipelineDeps } from '../deps.js';
+import { loggedStep } from '../log.js';
 import { buildRawMimeMessage, toBase64Url } from './mimeMessage.js';
 
 type ResolvedAttachment = { fileId: string; filename: string; mimeType: string };
@@ -38,6 +39,7 @@ async function resolveExternalFiles(
     deps.defaultDateFormat,
     false, // externalFolder n'est jamais soumis à autoCreateFolders (specs.md §3)
     deps.folderCache,
+    deps.quiet,
   );
 
   const resolvedNames = externalTemplates.map((template) =>
@@ -54,10 +56,15 @@ async function resolveExternalFiles(
 
   const results: ResolvedAttachment[] = [];
   for (const name of resolvedNames) {
-    const { data } = await deps.drive.files.list({
-      q: `name = '${name.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
-      fields: 'files(id, name, mimeType)',
-    });
+    const { data } = await loggedStep(
+      deps.quiet,
+      `Ligne ${context.rowNumber} : ${moduleName} : recherche du fichier externe "${name}"`,
+      () =>
+        deps.drive.files.list({
+          q: `name = '${name.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`,
+          fields: 'files(id, name, mimeType)',
+        }),
+    );
     const matches = data.files ?? [];
 
     if (matches.length === 0) {
@@ -104,8 +111,10 @@ async function resolveAttachments(
   return [...fromGenerated, ...fromExternal];
 }
 
-async function downloadAttachmentContent(deps: PipelineDeps, fileId: string): Promise<string> {
-  const { data } = await deps.drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+async function downloadAttachmentContent(deps: PipelineDeps, fileId: string, label: string): Promise<string> {
+  const { data } = await loggedStep(deps.quiet, label, () =>
+    deps.drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' }),
+  );
   const buffer = await streamToBuffer(data);
   return buffer.toString('base64');
 }
@@ -138,7 +147,11 @@ export async function runMailInstance(
     return;
   }
 
-  const resolvedAttachments = await resolveAttachments(moduleName, config, context, deps);
+  const logPrefix = `Ligne ${context.rowNumber} : ${moduleName}`;
+
+  const resolvedAttachments = await loggedStep(deps.quiet, `${logPrefix} : résolution des pièces jointes`, () =>
+    resolveAttachments(moduleName, config, context, deps),
+  );
   const bodyTemplate = config.template_html ?? readFileSync(config.template_html_path!, 'utf-8');
   const htmlBody = renderTemplateString(moduleName, bodyTemplate, rawData, outputs, deps.defaultDateFormat);
 
@@ -146,7 +159,11 @@ export async function runMailInstance(
     resolvedAttachments.map(async (attachment) => ({
       filename: attachment.filename,
       mimeType: attachment.mimeType,
-      contentBase64: await downloadAttachmentContent(deps, attachment.fileId),
+      contentBase64: await downloadAttachmentContent(
+        deps,
+        attachment.fileId,
+        `${logPrefix} : téléchargement de la pièce jointe "${attachment.filename}"`,
+      ),
     })),
   );
 
@@ -155,7 +172,9 @@ export async function runMailInstance(
 
   let output: MailOutput;
   if (config.draft_only) {
-    const { data } = await deps.gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw } } });
+    const { data } = await loggedStep(deps.quiet, `${logPrefix} : création du brouillon`, () =>
+      deps.gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw } } }),
+    );
     output = {
       subject,
       url: `https://mail.google.com/mail/u/0/#drafts?compose=${data.message?.id}`,
@@ -164,7 +183,9 @@ export async function runMailInstance(
       createdAt: new Date().toISOString(),
     };
   } else {
-    const { data } = await deps.gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+    const { data } = await loggedStep(deps.quiet, `${logPrefix} : envoi de l'email`, () =>
+      deps.gmail.users.messages.send({ userId: 'me', requestBody: { raw } }),
+    );
     output = {
       subject,
       url: `https://mail.google.com/mail/u/0/#sent/${data.id}`,

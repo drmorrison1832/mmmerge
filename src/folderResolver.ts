@@ -5,6 +5,7 @@
 import type { drive_v3 } from 'googleapis';
 import { renderTemplateString } from './templateEngine.js';
 import { ModuleError } from './pipeline/rowContext.js';
+import { loggedStep } from './pipeline/log.js';
 
 const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
 const DRIVE_ROOT = 'root';
@@ -19,11 +20,14 @@ async function resolveOrCreateSegment(
   segmentName: string,
   parentId: string,
   autoCreate: boolean,
+  quiet: boolean,
 ): Promise<string> {
-  const { data } = await drive.files.list({
-    q: `name = '${escapeForDriveQuery(segmentName)}' and '${parentId}' in parents and mimeType = '${FOLDER_MIME_TYPE}' and trashed = false`,
-    fields: 'files(id, name)',
-  });
+  const { data } = await loggedStep(quiet, `[${moduleName}] Résolution du dossier "${segmentName}"`, () =>
+    drive.files.list({
+      q: `name = '${escapeForDriveQuery(segmentName)}' and '${parentId}' in parents and mimeType = '${FOLDER_MIME_TYPE}' and trashed = false`,
+      fields: 'files(id, name)',
+    }),
+  );
   const matches = data.files ?? [];
 
   if (matches.length > 1) {
@@ -61,6 +65,7 @@ export async function resolveFolderPath(
   defaultDateFormat: string,
   autoCreate: boolean,
   cache: Map<string, string>,
+  quiet = true,
 ): Promise<string> {
   const resolvedPath = renderTemplateString(moduleName, pathTemplate, rawData, {}, defaultDateFormat);
 
@@ -78,7 +83,7 @@ export async function resolveFolderPath(
 
   let parentId = DRIVE_ROOT;
   for (const segment of segments) {
-    parentId = await resolveOrCreateSegment(moduleName, drive, segment, parentId, autoCreate);
+    parentId = await resolveOrCreateSegment(moduleName, drive, segment, parentId, autoCreate, quiet);
   }
 
   cache.set(resolvedPath, parentId);

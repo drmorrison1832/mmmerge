@@ -8,11 +8,15 @@ import { readFileSync } from 'node:fs';
 const InstanceMetaSchema = z.object({
   name: z.string().max(80).optional(),
   description: z.string().max(500).optional(),
+  /** Désactive l'instance : ignorée à l'exécution, jamais appelée ni référencée (voir superRefine ci-dessous). */
+  disable: z.boolean().optional().default(false),
 });
 
 const FileModuleFieldsSchema = z
   .object({
     template_id: z.string(),
+    /** Purement informatif — jamais lu par l'application. Un aide-mémoire pour l'utilisateur (lien Drive du template). */
+    template_link: z.string().optional(),
     output_folder: z.string().optional(),
     output_folder_id: z.string().optional(),
     output_filename: z.string(),
@@ -102,6 +106,10 @@ export const ProfileSchema = z
       ...config.gdocs.map((_, i) => `gdocs[${i}]`),
       ...pdfRefs,
     ]);
+    const disabledRefs = new Set([
+      ...config.gdocs.flatMap((instance, i) => (instance.disable ? [`gdocs[${i}]`] : [])),
+      ...config.pdf.flatMap((instance, i) => (instance.disable ? [`pdf[${i}]`] : [])),
+    ]);
 
     const LINK_TAG_PATTERN = /\{\{link:([a-zA-Z]+\[\d+\])\}\}/g;
     const extractLinkRefs = (text: string): string[] =>
@@ -114,6 +122,11 @@ export const ProfileSchema = z
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: `mail[${mailIndex}].generated : "${ref}" doit référencer une instance pdf[] (un gDoc ne peut pas être joint à un email)`,
+          });
+        } else if (disabledRefs.has(ref)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `mail[${mailIndex}].generated : "${ref}" est désactivée (disable: true) — impossible de la joindre.`,
           });
         }
         if (seenGenerated.has(ref)) {
@@ -144,6 +157,11 @@ export const ProfileSchema = z
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               message: `mail[${mailIndex}] : {{link:${ref}}} référence une instance introuvable`,
+            });
+          } else if (disabledRefs.has(ref)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `mail[${mailIndex}] : {{link:${ref}}} référence une instance désactivée (disable: true)`,
             });
           }
         }

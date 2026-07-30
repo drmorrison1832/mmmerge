@@ -7,10 +7,21 @@ import { fr } from 'date-fns/locale';
 import type { sheets_v4 } from 'googleapis';
 import type { RowContext, FileOutput, MailOutput } from './pipeline/rowContext.js';
 import type { Config } from './config/schema.js';
+import { loggedStep } from './pipeline/log.js';
 
 const RESERVED_COLUMNS = ['mmm_status', 'mmm_outputs', 'mmm_last_run'] as const;
 type ReservedColumn = (typeof RESERVED_COLUMNS)[number];
 type ColumnIndexes = Record<ReservedColumn, number>;
+
+/** Noms de colonnes (non vides) apparaissant plus d'une fois dans l'en-tête, sans doublon dans le résultat. */
+function findDuplicateHeaders(headers: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const header of headers) {
+    if (header === '') continue;
+    counts.set(header, (counts.get(header) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name);
+}
 
 function columnIndexToLetter(index: number): string {
   let n = index + 1;
@@ -44,6 +55,7 @@ export class SheetsWriter {
     private readonly sheetTabName: string,
     private readonly columns: ColumnIndexes,
     private readonly dryRun: boolean,
+    private readonly quiet: boolean,
   ) {}
 
   static async create(
@@ -52,13 +64,16 @@ export class SheetsWriter {
     sheetTabName: string,
     dryRun = false,
     initColumns = false,
+    quiet = true,
   ): Promise<SheetsWriter> {
     let data;
     try {
-      ({ data } = await sheets.spreadsheets.values.get({
-        spreadsheetId: sheetId,
-        range: `${sheetTabName}!1:1`,
-      }));
+      ({ data } = await loggedStep(quiet, `Lecture de l'en-tête du Sheet (onglet "${sheetTabName}")`, () =>
+        sheets.spreadsheets.values.get({
+          spreadsheetId: sheetId,
+          range: `${sheetTabName}!1:1`,
+        }),
+      ));
     } catch (err) {
       const rawMessage = (err as Error).message.replace(/\.+$/, '');
       throw new Error(
@@ -67,7 +82,16 @@ export class SheetsWriter {
           `est partagé avec le compte Google authentifié.`,
       );
     }
-    let headers = data.values?.[0] ?? [];
+    let headers = (data.values?.[0] ?? []).map((header) => String(header));
+
+    const duplicates = findDuplicateHeaders(headers);
+    if (duplicates.length > 0) {
+      throw new Error(
+        `Colonnes en double dans l'en-tête de l'onglet "${sheetTabName}" : ${duplicates.join(', ')}. ` +
+          `Chaque colonne doit avoir un titre unique.`,
+      );
+    }
+
     const missing = RESERVED_COLUMNS.filter((name) => !headers.includes(name));
 
     if (missing.length > 0) {
@@ -98,7 +122,7 @@ export class SheetsWriter {
       columns[name] = headers.indexOf(name);
     }
 
-    return new SheetsWriter(sheets, sheetId, sheetTabName, columns, dryRun);
+    return new SheetsWriter(sheets, sheetId, sheetTabName, columns, dryRun, quiet);
   }
 
   private cellRange(column: number, rowNumber: number): string {
@@ -110,25 +134,27 @@ export class SheetsWriter {
   }
 
   private async writeCells(cells: CellWrite[]): Promise<void> {
+    const ranges = cells.map((cell) => this.cellRange(cell.column, cell.rowNumber)).join(', ');
     if (this.dryRun) {
-      const ranges = cells.map((cell) => this.cellRange(cell.column, cell.rowNumber)).join(', ');
       console.log(`[dry-run] Écriture Sheets simulée : ${ranges}`);
       return;
     }
-    await this.sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: this.sheetId,
-      requestBody: {
-        valueInputOption: 'RAW',
-        data: cells.map((cell) => ({ range: this.cellRange(cell.column, cell.rowNumber), values: [[cell.value]] })),
-      },
-    });
+    await loggedStep(this.quiet, `Écriture Sheets (${ranges})`, () =>
+      this.sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: this.sheetId,
+        requestBody: {
+          valueInputOption: 'RAW',
+          data: cells.map((cell) => ({ range: this.cellRange(cell.column, cell.rowNumber), values: [[cell.value]] })),
+        },
+      }),
+    );
   }
 
   private async readOutputs(rowNumber: number): Promise<Record<string, FileOutput | MailOutput>> {
-    const { data } = await this.sheets.spreadsheets.values.get({
-      spreadsheetId: this.sheetId,
-      range: this.cellRange(this.columns.mmm_outputs, rowNumber),
-    });
+    const range = this.cellRange(this.columns.mmm_outputs, rowNumber);
+    const { data } = await loggedStep(this.quiet, `Lecture de "mmm_outputs" (${range})`, () =>
+      this.sheets.spreadsheets.values.get({ spreadsheetId: this.sheetId, range }),
+    );
     const raw = data.values?.[0]?.[0];
     if (!raw) return {};
     try {

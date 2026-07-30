@@ -6,7 +6,13 @@ import type { RowContext, FileOutput } from '../rowContext.js';
 import type { PdfInstance } from '../../config/schema.js';
 import { renderTemplateString } from '../../templateEngine.js';
 import type { PipelineDeps } from '../deps.js';
-import { resolveOutputFolderId, fillTemplateTags } from './googleDocsHelpers.js';
+import { loggedStep } from '../log.js';
+import { resolveOutputFolderId, resolveTemplateTagsForDoc, applyTemplateTags } from './googleDocsHelpers.js';
+
+/** Ajoute l'extension .pdf si absente (comparaison insensible à la casse) — jamais de doublon (.pdf.pdf). */
+function ensurePdfExtension(filename: string): string {
+  return /\.pdf$/i.test(filename) ? filename : `${filename}.pdf`;
+}
 
 export async function runPdfInstance(
   moduleName: string,
@@ -15,13 +21,14 @@ export async function runPdfInstance(
   deps: PipelineDeps,
 ): Promise<void> {
   const { rawData } = context;
-  const filename = renderTemplateString(
+  const renderedFilename = renderTemplateString(
     moduleName,
     config.output_filename,
     rawData,
     context.outputs,
     deps.defaultDateFormat,
   );
+  const filename = ensurePdfExtension(renderedFilename);
 
   if (deps.dryRun) {
     console.log(`[dry-run] ${moduleName} : générerait "${filename}" depuis le template "${config.template_id}".`);
@@ -31,28 +38,38 @@ export async function runPdfInstance(
     return;
   }
 
+  const logPrefix = `Ligne ${context.rowNumber} : ${moduleName}`;
+
+  const tags = await loggedStep(deps.quiet, `${logPrefix} : lecture du template`, () =>
+    resolveTemplateTagsForDoc(moduleName, deps.docs, config.template_id, rawData, deps.defaultDateFormat),
+  );
   const folderId = await resolveOutputFolderId(moduleName, deps, config, rawData);
 
-  const { data: tempCopy } = await deps.drive.files.copy({
-    fileId: config.template_id,
-    requestBody: { name: `[tmp] ${filename}` },
-  });
+  const { data: tempCopy } = await loggedStep(deps.quiet, `${logPrefix} : copie temporaire du template`, () =>
+    deps.drive.files.copy({
+      fileId: config.template_id,
+      requestBody: { name: `[tmp] ${renderedFilename}` },
+    }),
+  );
   const tempDocId = tempCopy.id!;
 
-  await fillTemplateTags(moduleName, deps.docs, tempDocId, rawData, deps.defaultDateFormat);
+  await loggedStep(deps.quiet, `${logPrefix} : remplissage des balises`, () => applyTemplateTags(deps.docs, tempDocId, tags));
 
-  const { data: pdfStream } = await deps.drive.files.export(
-    { fileId: tempDocId, mimeType: 'application/pdf' },
-    { responseType: 'stream' },
+  const { data: pdfStream } = await loggedStep(deps.quiet, `${logPrefix} : export en PDF`, () =>
+    deps.drive.files.export({ fileId: tempDocId, mimeType: 'application/pdf' }, { responseType: 'stream' }),
   );
 
-  const { data: created } = await deps.drive.files.create({
-    requestBody: { name: filename, parents: [folderId] },
-    media: { mimeType: 'application/pdf', body: pdfStream },
-  });
+  const { data: created } = await loggedStep(deps.quiet, `${logPrefix} : création du fichier PDF final`, () =>
+    deps.drive.files.create({
+      requestBody: { name: filename, parents: [folderId] },
+      media: { mimeType: 'application/pdf', body: pdfStream },
+    }),
+  );
   const fileId = created.id!;
 
-  await deps.drive.files.delete({ fileId: tempDocId });
+  await loggedStep(deps.quiet, `${logPrefix} : suppression du document temporaire`, () =>
+    deps.drive.files.delete({ fileId: tempDocId }),
+  );
 
   const output: FileOutput = {
     filename,

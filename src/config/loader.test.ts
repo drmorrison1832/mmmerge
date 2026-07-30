@@ -14,10 +14,18 @@ function removeFixture(name: string): void {
   rmSync(join(CONFIGS_DIR, `${name}.json`), { force: true });
 }
 
+function baseProfileFields(): Record<string, unknown> {
+  return { sheetId: 'sheet-id', sheetTabName: 'Contrats' };
+}
+
 describe('loadConfig', () => {
   afterEach(() => {
     removeFixture('__test-json-invalide');
     removeFixture('__test-zod-invalide');
+    removeFixture('__test-disable-defaut');
+    removeFixture('__test-disable-generated');
+    removeFixture('__test-disable-link');
+    removeFixture('__test-template-link');
   });
 
   it('charge le profil "exemple" et applique les valeurs par défaut absentes du fichier', () => {
@@ -54,5 +62,81 @@ describe('loadConfig', () => {
   it('lève une erreur listant les problèmes si la validation Zod échoue', () => {
     writeFixture('__test-zod-invalide', JSON.stringify({ sheetId: 'x' }));
     expect(() => loadConfig('__test-zod-invalide', [])).toThrow(/sheetTabName/);
+  });
+
+  it('"disable" vaut false par défaut, une instance désactivée non référencée charge sans erreur', () => {
+    writeFixture(
+      '__test-disable-defaut',
+      JSON.stringify({
+        ...baseProfileFields(),
+        gdocs: [{ template_id: 't', output_folder_id: 'f', output_filename: 'n' }],
+        pdf: [{ disable: true, template_id: 't2', output_folder_id: 'f2', output_filename: 'n2' }],
+      }),
+    );
+    const config = loadConfig('__test-disable-defaut', []);
+    expect(config.gdocs[0].disable).toBe(false);
+    expect(config.pdf[0].disable).toBe(true);
+  });
+
+  it('mail[].generated référençant une instance pdf[] désactivée → erreur explicite', () => {
+    writeFixture(
+      '__test-disable-generated',
+      JSON.stringify({
+        ...baseProfileFields(),
+        pdf: [{ disable: true, template_id: 't', output_folder_id: 'f', output_filename: 'n' }],
+        mail: [
+          {
+            to: '{{Email}}',
+            subject: 'x',
+            template_html: '<p>x</p>',
+            draft_only: true,
+            attach: 'generated',
+            generated: ['pdf[0]'],
+          },
+        ],
+      }),
+    );
+    expect(() => loadConfig('__test-disable-generated', [])).toThrow(/pdf\[0\].*désactivée/);
+  });
+
+  it('{{link:...}} référençant une instance gdocs[] désactivée → erreur explicite', () => {
+    writeFixture(
+      '__test-disable-link',
+      JSON.stringify({
+        ...baseProfileFields(),
+        gdocs: [{ disable: true, template_id: 't', output_folder_id: 'f', output_filename: 'n' }],
+        mail: [
+          {
+            to: '{{Email}}',
+            subject: 'x',
+            template_html: '<p>Voici : {{link:gdocs[0]}}</p>',
+            draft_only: true,
+            attach: 'none',
+          },
+        ],
+      }),
+    );
+    expect(() => loadConfig('__test-disable-link', [])).toThrow(/gdocs\[0\].*désactivée/);
+  });
+
+  it('"template_link" (gdocs/pdf) est accepté, purement informatif, jamais requis', () => {
+    writeFixture(
+      '__test-template-link',
+      JSON.stringify({
+        ...baseProfileFields(),
+        gdocs: [
+          {
+            template_id: 't',
+            template_link: 'https://docs.google.com/document/d/t/edit',
+            output_folder_id: 'f',
+            output_filename: 'n',
+          },
+        ],
+        pdf: [{ template_id: 't2', output_folder_id: 'f2', output_filename: 'n2' }],
+      }),
+    );
+    const config = loadConfig('__test-template-link', []);
+    expect(config.gdocs[0].template_link).toBe('https://docs.google.com/document/d/t/edit');
+    expect(config.pdf[0].template_link).toBeUndefined();
   });
 });

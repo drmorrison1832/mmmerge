@@ -81,6 +81,7 @@ Chaque profil est un fichier JSON dans `configs/<nom-du-profil>.json`. Exemple c
     {
       "name": "Contrat CDDU",
       "template_id": "1TemplateGdocsIdXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "template_link": "https://docs.google.com/document/d/1TemplateGdocsIdXXXXXXXXXXXXXXXXXXXXXXXXXXXX/edit",
       "output_folder": "Contrats/{{Annee:date[format:yyyy]}}",
       "output_filename": "CDDU {{Nom}} {{Prenom}}",
       "share": {
@@ -115,6 +116,77 @@ Points clés :
 - `share` (gdocs uniquement) : partage du document généré — `email` et/ou `link`, permission `reader`/`commenter`/`editor`.
 - `mail` : corps via **exactement une** des deux clés `template_html` (inline) ou `template_html_path` (fichier externe). `attach` (`all`/`generated`/`external`/`none`) détermine les pièces jointes ; `generated` référence uniquement des instances `pdf[]` (un gDoc ne s'attache pas — utiliser `{{link:gdocs[i]}}` dans le corps pour un lien de consultation).
 - `gdocs[0]`, `pdf[1]`, `mail[0]`... sont les identifiants techniques de position — stables, utilisés dans les erreurs, `generated`, `{{link:...}}`. La clé `name` (optionnelle) n'est qu'un affichage, jamais une référence.
+- `disable` (optionnel, tous types d'instance, défaut `false`) : désactive l'instance — ignorée à l'exécution, sans décaler les index des autres. Pratique pour désactiver temporairement un module en cours de configuration d'un profil. Une instance `mail[]` ne peut pas référencer (`generated`, `{{link:...}}`) une instance désactivée — erreur de configuration immédiate au chargement du profil, jamais au milieu d'une exécution.
+- `pdf[].output_filename` : l'extension `.pdf` est ajoutée automatiquement si absente (`CDDU {{Nom}}` devient `CDDU Dupont.pdf`) — insensible à la casse, jamais de doublon si `.pdf`/`.PDF` est déjà présent dans le nom résolu. Ne s'applique qu'au module `pdf` (un `gdocs[].output_filename` n'a pas d'extension à ajouter).
+- `template_link` (optionnel, `gdocs`/`pdf` uniquement, chaîne libre) : **purement décoratif, jamais lu par l'application** — un aide-mémoire pratique pour retrouver l'URL du template source directement depuis le profil, sans avoir à la reconstruire à partir du seul `template_id`. Absent de `mail` (son "template" est `template_html`/`template_html_path`, déjà dans le profil).
+
+### Autres exemples de profils
+
+**Profil minimal (gDocs seul, pas de PDF ni d'email)** :
+
+```json
+{
+  "sheetId": "1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij",
+  "sheetTabName": "Feuille 1",
+  "gdocs": [
+    {
+      "template_id": "1TemplateGdocsIdXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_folder_id": "1DriveFolderIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_filename": "CDDU {{Nom}} {{Prenom}}"
+    }
+  ]
+}
+```
+
+**Module désactivé (`disable`)** — utile en cours de configuration d'un profil, quand un template n'est pas encore prêt : l'instance `pdf[0]` est ignorée, mais garde son identifiant de position (un `mail[]` qui la référencerait dans `generated` lèverait une erreur de configuration explicite, pas une erreur en cours d'exécution) :
+
+```json
+{
+  "pdf": [
+    {
+      "disable": true,
+      "template_id": "1TemplatePdfIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_folder_id": "1DriveFolderIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_filename": "CDDU {{Nom}} {{Prenom}}"
+    }
+  ]
+}
+```
+
+**Email avec pièce jointe externe** (`attach: "external"`, un fichier déjà présent sur Drive, pas généré par ce profil) :
+
+```json
+{
+  "mail": [
+    {
+      "to": "{{Email}}",
+      "subject": "Votre attestation {{Annee:date[format:yyyy]}}",
+      "template_html": "<p>Bonjour {{Prenom}},</p><p>Veuillez trouver ci-joint votre attestation.</p>",
+      "draft_only": false,
+      "attach": "external",
+      "externalFolder": "Attestations/{{Annee:date[format:yyyy]}}",
+      "external": ["Attestation {{Nom}}.pdf"]
+    }
+  ]
+}
+```
+
+**Email combinant pièce jointe générée et lien de consultation** (le PDF est joint, le gDoc n'est que consultable — un gDoc ne peut pas être joint à un email) :
+
+```json
+{
+  "mail": [
+    {
+      "to": "{{Email}}",
+      "subject": "Votre contrat CDDU",
+      "template_html": "<p>Bonjour {{Prenom}},</p><p>Contrat joint en PDF. Version modifiable : {{link:gdocs[0]}}</p>",
+      "draft_only": true,
+      "attach": "generated",
+      "generated": ["pdf[0]"]
+    }
+  ]
+}
+```
 
 Détail complet du format (schéma Zod, toutes les clés, règles de validation) : `docs/specs.md` (comportement) et `docs/architecture.md` (technique).
 
@@ -124,14 +196,61 @@ Détail complet du format (schéma Zod, toutes les clés, règles de validation)
 
 - Génériques (tous types) : `required`, `uppercase`, `lowercase`, `capitalize`.
 - Type `string` : `initial` (première lettre + point).
-- Type `date` : `format:<token>` (tokens `date-fns`, ex: `MMMM`, `yyyy`), locale française. Sans `format:`, utilise `defaultDateFormat` du profil.
-- `prefix(texte)` / `suffix(texte)` : ajoute `texte` avant/après la valeur, **uniquement si la cellule n'est pas vide** — pratique pour chaîner des champs optionnels sans laisser d'espace double ou orphelin. Le contenu est pris à la lettre (espaces compris), peut contenir une virgule, et peut apparaître à n'importe quelle position dans la liste de modificateurs.
-- Les modificateurs s'appliquent dans l'ordre d'écriture — `[lowercase, capitalize]` ≠ `[capitalize, lowercase]`.
+- Type `date` : `format:<token>` (tokens `date-fns`, ex: `MMMM`, `yyyy`), locale française. Sans `format:`, utilise `defaultDateFormat` du profil. Voir tableau de référence des tokens ci-dessous.
+- Type `number` : `format:<n>` (`n` = nombre entier de décimales fixes, ex: `format:2`). Format français par défaut (séparateur milliers, virgule décimale — ex: `1123.43` → `1 123,43`), y compris sans `format:` explicite.
+- Type `euro` : automatique — 0 décimale si le montant est rond, 2 sinon (ex: `12` → `12 €`, `12,3` → `12,30 €`, `12,335` → `12,34 €` — arrondi au centime). `format:<n>` impose un nombre de décimales fixe, prioritaire sur cette règle automatique. Séparateur des milliers en espace fine insécable et espace insécable avant `€` (typographie française native, `Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' })`) — ex: `1234.5` → `1 234,50 €`.
+- `nospace` (types `number`/`euro` uniquement) : retire le séparateur de milliers (ex: `1234,56 €` au lieu de `1 234,56 €`) — utile pour coller une valeur dans un champ/formulaire qui rejette les espaces. Garde l'espace insécable avant `€`. Se combine avec `format:<n>` dans n'importe quel ordre (contrairement aux autres modificateurs, `nospace` n'est pas positionnel — voir tableau ci-dessous).
+- `prefix(texte)` / `suffix(texte)` : ajoute `texte` avant/après la valeur, **uniquement si la cellule n'est pas vide** — pratique pour chaîner des champs optionnels sans laisser d'espace double ou orphelin (pour un montant en euros avec le symbole déjà inclus, voir plutôt le type `euro` ci-dessus). Le contenu est pris à la lettre (espaces compris), peut contenir une virgule, et peut apparaître à n'importe quelle position dans la liste de modificateurs.
+- Les modificateurs s'appliquent dans l'ordre d'écriture — `[lowercase, capitalize]` ≠ `[capitalize, lowercase]` — **sauf** `nospace`, qui s'applique quelle que soit sa position dans la liste.
 - `{{link:gdocs[0]}}` / `{{link:pdf[0]}}` (mail uniquement — `to`, `cc`, `subject`, corps) : résout l'URL d'une instance déjà générée pour cette ligne.
 
-Exemple : `{{nom:string[required, uppercase]}} {{date:date[required, format:MMMM yyyy]}}` → `DUPONT juillet 2026`.
+### Exemples de balises, par type
+
+| Balise | Donnée (cellule) | Résultat |
+|---|---|---|
+| `{{Nom}}` | `Dupont` | `Dupont` |
+| `{{Nom[uppercase]}}` | `Dupont` | `DUPONT` |
+| `{{Nom[required]}}` | *(vide)* | → `Erreur` |
+| `{{Ville[capitalize]}}` | `saint-jean-de-luz` | `Saint-Jean-De-Luz` |
+| `{{Prenom:string[initial]}}` | `Marie` | `M.` |
+| `{{prenom2[prefix( )]}}` | *(vide)* | *(chaîne vide, rien avant)* |
+| `{{prenom2[prefix( )]}}` | `Sébastien` | ` Sébastien` |
+| `{{Date:date}}` | `46224` *(numéro de série Sheets)* | `21/7/2026` *(= `defaultDateFormat`)* |
+| `{{Date:date[format:MMMM yyyy]}}` | `46224` | `juillet 2026` |
+| `{{Date:date[format:EEEE d MMMM yyyy]}}` | `46224` | `mardi 21 juillet 2026` |
+| `{{Montant:number}}` | `1234.5` | `1 234,5` |
+| `{{Montant:number[format:2]}}` | `1234` | `1 234,00` |
+| `{{Montant:number[nospace]}}` | `1234.5` | `1234,5` |
+| `{{brut_total:euro}}` | `1123.43` | `1 123,43 €` |
+| `{{brut_total:euro}}` | `1200` | `1 200 €` *(montant rond → 0 décimale)* |
+| `{{brut_total:euro[format:2]}}` | `1200` | `1 200,00 €` |
+| `{{brut_total:euro[nospace]}}` | `1234.56` | `1234,56 €` |
+| `{{brut_total:euro[nospace, format:2]}}` | `1234` | `1234,00 €` |
+| `{{link:pdf[0]}}` | *(instance `pdf[0]` déjà générée pour cette ligne)* | `https://drive.google.com/file/d/.../view` |
+
+Exemple combiné : `{{nom:string[required, uppercase]}} {{date:date[required, format:MMMM yyyy]}}` → `DUPONT juillet 2026`.
 
 Exemple (champs optionnels sans espaces doubles) : `{{prenom1}}{{prenom2[prefix( )]}}{{prenom3[prefix( )]}} {{nom}}` avec `prenom2` vide → `Étienne Paul Dupont` (pas `Étienne  Paul Dupont`).
+
+### Tokens `date-fns` courants (type `date`, locale française)
+
+| Token | Signification | Exemple (mardi 21 juillet 2026) |
+|---|---|---|
+| `d` | Jour du mois | `21` |
+| `dd` | Jour du mois, 2 chiffres | `21` |
+| `M` | Mois numérique | `7` |
+| `MM` | Mois numérique, 2 chiffres | `07` |
+| `MMM` | Mois abrégé | `juil.` |
+| `MMMM` | Mois complet | `juillet` |
+| `yy` | Année, 2 chiffres | `26` |
+| `yyyy` | Année, 4 chiffres | `2026` |
+| `EEE` | Jour de la semaine abrégé | `mar.` |
+| `EEEE` | Jour de la semaine complet | `mardi` |
+| `HH` | Heure (24h), 2 chiffres | `14` |
+| `mm` | Minutes, 2 chiffres | `32` |
+| `ss` | Secondes, 2 chiffres | `05` |
+
+Se combinent librement dans un même `format:` : `format:EEEE d MMMM yyyy` → `mardi 21 juillet 2026`, `format:dd/MM/yyyy` → `21/07/2026`, `format:HH:mm` → `14:32`. Liste complète des tokens : [documentation `date-fns` (`format`)](https://date-fns.org/docs/format).
 
 ## Utilisation
 
@@ -149,10 +268,43 @@ node dist/cli.js <profil> [options]
 | `--validate` | Vérifie la config, l'accessibilité du Sheet et des `template_id`/`output_folder_id` — sans lire de ligne de données ni lancer le pipeline. |
 | `--init-columns` | Crée les colonnes système `mmm_*` manquantes au lieu d'échouer. |
 | `--list` | Affiche les lignes éligibles (numéro + statut actuel) sans exécuter le pipeline — pour vérifier avant un lancement réel. |
-| `--verbose` | Détail technique supplémentaire en console (aucun effet sur le comportement). |
+| `--quiet` | Supprime le logging de progression en temps réel (actif par défaut) — aucun effet sur le comportement. |
 | `--help-templates` | Affiche la syntaxe des balises (voir section précédente) et quitte — utilisable sans profil. |
 
+Par défaut, chaque appel réseau (Sheets/Drive/Docs/Gmail) est annoncé en console avant d'être lancé, puis confirmé (`: OK`) une fois terminé — utile pour savoir précisément où en est une exécution longue, ou ce qui est en cours si le script semble bloqué. `--quiet` revient à un affichage minimal (avertissements, résumé final, ligne en cause en cas d'erreur).
+
 Code de sortie `0` (succès, ou aucune ligne à traiter) ou `1` (erreur — le statut est toujours écrit sur le Sheet avant l'arrêt). En fin d'exécution (hors `--validate`/`--list`), un résumé est affiché : lignes traitées, documents/PDF générés, emails composés, et la ligne en cause en cas d'arrêt sur erreur.
+
+### Exemples de commandes
+
+```bash
+# Avant tout lancement réel : quelles lignes seraient traitées, et avec quel statut actuel ?
+mmmerge CDDUA10 --list
+
+# Test à blanc complet — aucune écriture Sheets/Drive/Gmail, juste la console
+mmmerge CDDUA10 --dry-run
+
+# Ne traiter que les lignes 5, 12 et 13 du Sheet
+mmmerge CDDUA10 --lines=5,12,13
+
+# Retraiter la ligne 8, même si mmm_status vaut déjà "Succès"
+mmmerge CDDUA10 --force --lines=8
+
+# Vérifier la config (Sheet, colonnes mmm_*, template_id/output_folder_id) sans rien exécuter
+mmmerge CDDUA10 --validate
+
+# Premier lancement sur un nouveau Sheet : créer mmm_status/mmm_outputs/mmm_last_run automatiquement
+mmmerge CDDUA10 --init-columns
+
+# Lancement réel, mais sans le détail de progression (juste avertissements + résumé)
+mmmerge CDDUA10 --quiet
+
+# Combiner plusieurs flags : test à blanc, lignes ciblées, sans logs de progression
+mmmerge CDDUA10 --dry-run --lines=2,3 --quiet
+
+# Rappel de la syntaxe des balises et modificateurs — utilisable sans profil
+mmmerge --help-templates
+```
 
 ## Développement
 

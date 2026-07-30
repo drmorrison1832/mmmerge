@@ -5,7 +5,8 @@ import type { RowContext, FileOutput } from '../rowContext.js';
 import type { GdocsInstance } from '../../config/schema.js';
 import { renderTemplateString } from '../../templateEngine.js';
 import type { PipelineDeps } from '../deps.js';
-import { resolveOutputFolderId, fillTemplateTags, resolveShareSettings } from './googleDocsHelpers.js';
+import { loggedStep } from '../log.js';
+import { resolveOutputFolderId, resolveTemplateTagsForDoc, applyTemplateTags, resolveShareSettings } from './googleDocsHelpers.js';
 
 export async function runGdocsInstance(
   moduleName: string,
@@ -24,15 +25,22 @@ export async function runGdocsInstance(
     return;
   }
 
+  const logPrefix = `Ligne ${context.rowNumber} : ${moduleName}`;
+
+  const tags = await loggedStep(deps.quiet, `${logPrefix} : lecture du template`, () =>
+    resolveTemplateTagsForDoc(moduleName, deps.docs, config.template_id, rawData, deps.defaultDateFormat),
+  );
   const folderId = await resolveOutputFolderId(moduleName, deps, config, rawData);
 
-  const { data: copied } = await deps.drive.files.copy({
-    fileId: config.template_id,
-    requestBody: { name: filename, parents: [folderId] },
-  });
+  const { data: copied } = await loggedStep(deps.quiet, `${logPrefix} : copie du template`, () =>
+    deps.drive.files.copy({
+      fileId: config.template_id,
+      requestBody: { name: filename, parents: [folderId] },
+    }),
+  );
   const fileId = copied.id!;
 
-  await fillTemplateTags(moduleName, deps.docs, fileId, rawData, deps.defaultDateFormat);
+  await loggedStep(deps.quiet, `${logPrefix} : remplissage des balises`, () => applyTemplateTags(deps.docs, fileId, tags));
 
   const output: FileOutput = {
     filename,
@@ -43,6 +51,15 @@ export async function runGdocsInstance(
   await deps.sheetsWriter.updateOutput(context.rowNumber, moduleName, output);
 
   if (config.share) {
-    await resolveShareSettings(moduleName, deps.drive, fileId, config.share, rawData, deps.defaultDateFormat);
+    await resolveShareSettings(
+      moduleName,
+      deps.drive,
+      fileId,
+      config.share,
+      rawData,
+      deps.defaultDateFormat,
+      context.rowNumber,
+      deps.quiet,
+    );
   }
 }

@@ -56,7 +56,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
     dryRun: false,
-    verbose: false,
+    quiet: true,
     ...overrides,
   };
   return { deps, updateOutput };
@@ -64,6 +64,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
 
 function baseConfig(overrides: Partial<MailInstance> = {}): MailInstance {
   return {
+    disable: false,
     to: '{{Email}}',
     cc: [],
     subject: 'Votre contrat',

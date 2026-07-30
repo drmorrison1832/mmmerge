@@ -3,8 +3,9 @@
  * et remplissage des balises d'un Google Doc. Voir architecture.md §3, §7.
  */
 import type { docs_v1, drive_v3 } from 'googleapis';
-import { resolveTemplateTags, renderTemplateString } from '../../templateEngine.js';
+import { resolveTemplateTags, renderTemplateString, type ResolvedTag } from '../../templateEngine.js';
 import { resolveFolderPath } from '../../folderResolver.js';
+import { loggedStep } from '../log.js';
 import type { PipelineDeps } from '../deps.js';
 
 type OutputFolderConfig = { output_folder?: string; output_folder_id?: string };
@@ -24,6 +25,7 @@ export async function resolveOutputFolderId(
     deps.defaultDateFormat,
     deps.autoCreateFolders,
     deps.folderCache,
+    deps.quiet,
   );
 }
 
@@ -47,16 +49,25 @@ function extractPlainText(elements: docs_v1.Schema$StructuralElement[]): string 
   return text;
 }
 
-export async function fillTemplateTags(
+/**
+ * Lit un document (le template lui-même, avant toute copie) et résout ses balises.
+ * Lève une ModuleError si une balise est invalide — à appeler avant de copier le
+ * template sur Drive, pour ne jamais créer de fichier orphelin en cas d'erreur.
+ */
+export async function resolveTemplateTagsForDoc(
   moduleName: string,
   docs: docs_v1.Docs,
   documentId: string,
   rawData: Record<string, string>,
   defaultDateFormat: string,
-): Promise<void> {
+): Promise<ResolvedTag[]> {
   const { data } = await docs.documents.get({ documentId });
   const fullText = extractPlainText(data.body?.content ?? []);
-  const tags = resolveTemplateTags(moduleName, fullText, rawData, defaultDateFormat);
+  return resolveTemplateTags(moduleName, fullText, rawData, defaultDateFormat);
+}
+
+/** Applique des balises déjà résolues (voir resolveTemplateTagsForDoc) sur un document. */
+export async function applyTemplateTags(docs: docs_v1.Docs, documentId: string, tags: ResolvedTag[]): Promise<void> {
   if (tags.length === 0) return;
 
   await docs.documents.batchUpdate({
@@ -83,20 +94,28 @@ export async function resolveShareSettings(
   shareConfig: { email?: { addresses: string[]; permission: 'reader' | 'commenter' | 'editor' }; link?: { permission: 'reader' | 'commenter' | 'editor' } },
   rawData: Record<string, string>,
   defaultDateFormat: string,
+  rowNumber = 0,
+  quiet = true,
 ): Promise<void> {
+  const logPrefix = `Ligne ${rowNumber} : ${moduleName} : partage`;
+
   if (shareConfig.link) {
-    await drive.permissions.create({
-      fileId,
-      requestBody: { type: 'anyone', role: driveRole(shareConfig.link.permission) },
-    });
+    await loggedStep(quiet, `${logPrefix} — lien public`, () =>
+      drive.permissions.create({
+        fileId,
+        requestBody: { type: 'anyone', role: driveRole(shareConfig.link!.permission) },
+      }),
+    );
   }
   if (shareConfig.email) {
     for (const addressTemplate of shareConfig.email.addresses) {
       const address = renderTemplateString(moduleName, addressTemplate, rawData, {}, defaultDateFormat);
-      await drive.permissions.create({
-        fileId,
-        requestBody: { type: 'user', emailAddress: address, role: driveRole(shareConfig.email.permission) },
-      });
+      await loggedStep(quiet, `${logPrefix} — email "${address}"`, () =>
+        drive.permissions.create({
+          fileId,
+          requestBody: { type: 'user', emailAddress: address, role: driveRole(shareConfig.email!.permission) },
+        }),
+      );
     }
   }
 }

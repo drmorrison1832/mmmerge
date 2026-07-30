@@ -35,7 +35,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
     dryRun: false,
-    verbose: false,
+    quiet: true,
     ...overrides,
   };
   return { deps, updateOutput };
@@ -43,6 +43,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
 
 function baseConfig(overrides: Partial<GdocsInstance> = {}): GdocsInstance {
   return {
+    disable: false,
     template_id: 'template-id',
     output_folder_id: 'folder-id',
     output_filename: 'CDDU {{Nom}}',
@@ -67,7 +68,7 @@ describe('runGdocsInstance', () => {
       fileId: 'template-id',
       requestBody: { name: 'CDDU Dupont', parents: ['folder-id'] },
     });
-    expect(get).toHaveBeenCalledWith({ documentId: 'new-doc-id' });
+    expect(get).toHaveBeenCalledWith({ documentId: 'template-id' });
     expect(batchUpdate).toHaveBeenCalledOnce();
 
     expect(context.outputs['gdocs[0]']).toEqual({
@@ -107,6 +108,22 @@ describe('runGdocsInstance', () => {
     await runGdocsInstance('gdocs[0]', baseConfig(), baseContext(), deps);
 
     expect(permissionsCreate).not.toHaveBeenCalled();
+  });
+
+  it("ne copie pas le template si une balise du template est invalide (pas de fichier orphelin)", async () => {
+    const body: docs_v1.Schema$Body = {
+      content: [{ paragraph: { elements: [{ textRun: { content: 'Bonjour {{Nom:boolean}}' } }] } }],
+    };
+    const get = vi.fn(async () => ({ data: { body } }));
+    const docs = { documents: { get, batchUpdate: vi.fn() } } as unknown as docs_v1.Docs;
+    const { drive, copy } = createMockDrive();
+    const { deps } = createDeps({ docs, drive });
+
+    await expect(runGdocsInstance('gdocs[0]', baseConfig(), baseContext(), deps)).rejects.toThrow(
+      /type "boolean" inconnu/,
+    );
+
+    expect(copy).not.toHaveBeenCalled();
   });
 
   it("n'appelle aucune API Google en mode dry-run, écrit une sortie synthétique", async () => {

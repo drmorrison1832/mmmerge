@@ -1,7 +1,34 @@
 # Architecture Technique : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-22 — v10
-> **Résumé des derniers changements :** Nouveaux modificateurs `prefix(texte)`/`suffix(texte)` dans `templateEngine.ts` (§3), génériques (tous types), conditionnés gratuitement par le court-circuit déjà existant pour cellule vide dans `resolveTagValue` (`applyModifiers` n'est jamais appelée pour une valeur vide). Le découpage des modificateurs (`parseModifiers`) passe d'un simple `.split(',')` à `splitModifiersRespectingParens`, conscient de la profondeur de parenthèses — ne coupe pas sur une virgule à l'intérieur de `prefix(...)`/`suffix(...)`, lève une `Erreur` explicite si les parenthèses ne s'équilibrent pas. Un `.trim()` uniforme (comme avant) reste suffisant : il ne touche que les extrémités de chaque modificateur déjà délimité par la virgule de plus haut niveau, jamais l'intérieur des parenthèses. Design initial envisagé (`prefix:`/`suffix:` sans parenthèses, contrainte de position "doit être en dernier" pour éviter l'ambiguïté du trim) abandonné avant d'être finalisé : la délimitation par parenthèses supprime cette contrainte entièrement.
+> **Dernière mise à jour :** 2026-07-31 — v18
+> **Résumé des derniers changements :** Trois changements. (1) Nouveau champ `template_link` (`FileModuleFieldsSchema`, donc `gdocs`/`pdf` uniquement) : `z.string().optional()`, purement décoratif — aucune logique associée nulle part, jamais lu, jamais validé. (2) `cli.ts` : correction d'une régression sur l'affichage des erreurs fatales non interceptées — voir §8 pour le détail complet (la trace de pile brute s'affichait par défaut au lieu du message seul, un renversement accidentel introduit en v13 lors du remplacement de `--verbose` par `--quiet`). Désormais toujours `Erreur : <message>`, indépendant de `--quiet`. (3) Documentation seulement : correction de plusieurs exemples déjà en place où l'espace attendu avant/dans un montant en euros ou un nombre à séparateur de milliers était un espace ASCII ordinaire au lieu du caractère réellement produit (U+00A0 avant `€`, U+202F pour le séparateur de milliers) — aucun changement de code, seulement de texte.
+>
+> **Résumé v17 (2026-07-31) :** Deux corrections signalées par l'utilisateur sur le même profil réel (`configs/CDDUA10.json`).
+> (1) `pdf.ts` : `ensurePdfExtension` ajoute `.pdf` au nom résolu s'il est absent (insensible à la casse, jamais de doublon) — `drive.files.create` ne déduit jamais d'extension depuis `mimeType`, contrairement à un upload via l'UI Drive. Le nom du doc temporaire (`[tmp] ...`) garde volontairement le nom **sans** extension (`renderedFilename`, distinct de `filename`) puisqu'il ne s'agit pas encore d'un PDF ; seul le fichier final (`files.create`) et `output.filename` (donc aussi le nom de pièce jointe côté `mail.ts` en mode `generated`) portent l'extension. `gdocs.ts` volontairement inchangé (un gDoc n'a pas d'extension de fichier classique).
+> (2) `templateEngine.ts` : nouveau modificateur `nospace` (types `number`/`euro`) — motivé par des formulaires externes qui rejettent une valeur copiée-collée contenant un espace, y compris l'espace fine insécable (U+202F) que produit le séparateur de milliers par défaut. `formatNumberFr`/`formatEuro` gagnent un paramètre `noGroup` (`Intl.NumberFormat`'s `useGrouping: false`) — vérifié que `useGrouping` n'affecte que le séparateur de milliers, jamais l'espace insécable (U+00A0) avant `€` généré par `style: 'currency'`. Contrainte de conception : `nospace` et `format:<n>` alimentent le **même** appel `Intl.NumberFormat`, donc ne peuvent pas être composés comme deux transformations de texte indépendantes appliquées successivement (à la différence de `prefix`/`suffix`/`uppercase`) — `nospace` est résolu une fois pour toutes en `noGroup` avant la boucle des modificateurs (même traitement que `required`), et simplement ignoré (`continue`, après validation du type) à sa position dans la liste. Conséquence assumée : `nospace` est le premier modificateur qui n'est pas positionnel — `[nospace, format:2]` et `[format:2, nospace]` produisent un résultat identique.
+>
+> **Résumé v16 (2026-07-30) :** Nouvelle clé `disable` (§3, §6) sur `InstanceMetaSchema` (`config/schema.ts`), donc commune à `gdocs`/`pdf`/`mail` : `z.boolean().optional().default(false)`. `orchestrator.ts` : `processRow` saute (`continue`) toute instance `disable: true` avant tout appel, sans jamais recalculer les index de position des autres instances du même tableau (`.entries()` porte sur le tableau complet, non filtré) ; `validateResourceAccessibility` exclut les instances désactivées de la liste à vérifier ; `printSummary` ne compte que les instances actives dans son calcul (`processedRows × nombre d'instances actives`) — bug latent sinon dès qu'une instance désactivée existe (comptait toujours le total brut du tableau) ; nouvelle fonction `listDisabledInstances` (parcourt les trois tableaux, retourne les refs `type[i]` désactivées dans l'ordre du profil), utilisée pour une notification unique en tout début de `runPipeline`, avant authentification, non affectée par `--quiet`. `config/schema.ts` : le `superRefine` existant (déjà chargé de vérifier qu'une référence `generated`/`{{link:...}}` pointe vers une instance *existante*) gagne un second filtre : la même référence ne doit pas non plus pointer vers une instance *désactivée* — extension directe du même mécanisme statique, `disable` étant un réglage fixe du profil (jamais dépendant d'une ligne du Sheet), donc toujours vérifiable sans lire le Sheet. Aucun changement côté runtime des modules (`gdocs.ts`/`pdf.ts`/`mail.ts`) : ils ne voient jamais une instance désactivée, celle-ci étant filtrée en amont dans `processRow`.
+>
+> **Résumé v15 (2026-07-23) :** Suite à un signalement utilisateur (exécution figée sans aucun message console — impossible de savoir si le script travaillait encore ou était bloqué). Nouveau fichier `pipeline/log.ts` : `loggedStep(quiet, message, action)`, logge `"<message>..."` avant `action()` puis `"<message> : OK"` une fois résolue (rien si `action` rejette — l'absence de `: OK` situe déjà l'erreur). `PipelineDeps.verbose`/`CliFlags.verbose` renommés en `quiet` (sémantique inversée : `false` = verbeux, nouveau comportement par défaut). `--verbose` remplacé par `--quiet` dans `cli.ts` (y compris pour le choix trace complète/message seul sur une erreur non interceptée par `main()`). Chaque appel réseau individuel est désormais enveloppé (pas seulement le niveau ligne/instance, comme le faisait l'ancien `--verbose` — voir résumé v6 et le point 7 des étapes de l'orchestrateur, §3) :
+> - `auth.ts` : `authenticate(quiet)`, avant `getAccessToken()`.
+> - `sheetsWriter.ts` : `SheetsWriter` gagne un champ `quiet` (constructeur + `create(..., quiet = true)`) ; `writeCells`/`readOutputs`, chokepoints uniques par lesquels passent toutes les méthodes publiques (`markInitialRow`/`updateOutput`/`resetOutputs`/`closeRow`), enveloppent leur appel `batchUpdate`/`get` réel (la branche `dryRun`, qui ne fait aucun appel réseau, reste inchangée et inconditionnelle) ; log dédié avant la lecture initiale de l'en-tête.
+> - `orchestrator.ts` : `readSheetRows`/`readHiddenRowNumbers` gagnent un paramètre `quiet` ; `purgeRowOutputs(..., quiet = true)` gagne un log avant chaque tentative de mise à la corbeille (le résultat, succès ou échec, était déjà annoncé sans condition via `console.warn`) ; `processRow` enveloppe chaque appel d'instance (`runGdocsInstance`/`runPdfInstance`/`runMailInstance`) avec `loggedStep` au lieu du `if (deps.verbose) console.log(...)` précédent, et logge le démarrage de la ligne avant la purge.
+> - `folderResolver.ts` : `resolveFolderPath`/`resolveOrCreateSegment` gagnent un paramètre `quiet = true` ; enveloppe `files.list` par segment (la création automatique garde son `console.warn` inconditionnel existant).
+> - `googleDocsHelpers.ts` : `resolveShareSettings` gagne `rowNumber = 0, quiet = true` ; enveloppe chaque `permissions.create` (lien, puis un par adresse email).
+> - `gdocs.ts`/`pdf.ts` : enveloppent lecture du template, copie (temporaire pour pdf), remplissage des balises, et (pdf uniquement) export/création finale/suppression du temporaire.
+> - `mail.ts` : enveloppe la résolution des pièces jointes (globalement, puis chaque recherche de fichier externe individuellement), chaque téléchargement de pièce jointe (utile en particulier ici : `Promise.all` est le seul point de concurrence réelle du pipeline — specs.md §2 — donc les messages incluent systématiquement le nom du fichier pour rester non ambigus malgré l'entrelacement), et la création de brouillon/l'envoi.
+>
+> Beaucoup de ces fonctions exportées et testées directement (`resolveFolderPath`, `resolveShareSettings`, `purgeRowOutputs`, `SheetsWriter.create`) ont leur nouveau paramètre `quiet` par défaut à `true`, uniquement pour ne pas devoir modifier tous leurs sites d'appel dans les tests existants (qui n'ont pas besoin de ce log) — les véritables appelants runtime (`orchestrator.ts`, modules du pipeline) passent toujours `deps.quiet`/`cliFlags.quiet` explicitement, sans jamais dépendre de cette valeur par défaut.
+>
+> **Résumé v14 (2026-07-23) :** Nouveau type de balise `euro` dans `templateEngine.ts` (§3) : `formatEuro`, basée sur `Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' })` — choisie après vérification en conditions réelles (lecture directe, via l'API Docs, du document `181sHDTAC-k_7300kA_i9v1vYkf8ODCQJFjmlc7SZfz8` fourni par l'utilisateur comme référence typographique) que cette formule produit nativement le séparateur de milliers en espace fine insécable (U+202F) et l'espace insécable (U+00A0) avant `€` attendus, sans code de composition manuel. Nombre de décimales géré par `hasNonZeroCents` (arrondi au centime, corrigé de l'imprécision flottante via `Number.EPSILON` — nécessaire pour que `12.335` arrondisse vers `12,34` et non `12,33`, ce dernier cas ayant été vérifié par calcul direct avant l'implémentation) : 0 décimale si le montant est rond, 2 sinon. `format:<n>` (même mécanisme que pour `number`) impose un nombre de décimales fixe et prime toujours sur cette règle automatique, sans affecter la mise en forme (espaces, `€`).
+>
+> **Résumé v13 (2026-07-23) :** Correction d'un bug rapporté par l'utilisateur : deux colonnes du Sheet portant le même titre étaient silencieusement fusionnées. `SheetsWriter.create` (§5) gagne `findDuplicateHeaders`, appelée juste après la lecture de l'en-tête, avant la logique des colonnes `mmm_*` manquantes — `Erreur` explicite listant le(s) titre(s) en double (réservés ou libres), en-têtes vides ignorés. Un seul point de vérification, `SheetsWriter.create` s'exécutant toujours en premier dans `runPipeline` (couvre aussi `--validate`) — `readSheetRows` (orchestrator.ts §3), qui relit l'en-tête séparément pour `rawData`, n'a pas besoin de sa propre vérification.
+>
+> **Résumé v12 (2026-07-23) :** Nouveau type de balise `number` dans `templateEngine.ts` (§3) : `parseSheetNumber` (parse + erreur explicite si non numérique, symétrique à `parseSheetDate`) et `formatNumberFr` (`Intl.NumberFormat('fr-FR', ...)`, séparateur de milliers ` ` espace fine insécable + virgule décimale). Nouveau modificateur type-spécifique `format:<n>` (`n` = décimales fixes). Motivé par un cas réel : une cellule numérique Sheets (`brut_total = 1123.43`) utilisée sans type déclaré (`string` implicite) affichait `1123.43` dans le document généré — notation JS (`String(1123.43)`), pas française. **Bug corrigé au passage, plus large que `number`** : `applyModifiers` appliquait jusqu'ici le format par défaut (`defaultDateFormat` pour `date`) comme une étape *finale*, après la boucle des modificateurs — un `prefix(...)`/`suffix(...)` sans `format:` explicite était donc silencieusement écrasé par ce format par défaut (jamais remarqué faute de test combinant les deux). Restructuré : la valeur de départ (avant la boucle) est désormais déjà mise en forme par défaut pour `date`/`number` ; un `format:` explicite, où qu'il apparaisse dans la liste, écrase cette valeur à son tour — `prefix`/`suffix` qui suivent s'appliquent donc toujours au texte réellement affiché. Aucun test existant ne dépendait de l'ancien comportement (vérifié).
+>
+> **Résumé v11 (2026-07-23) :** Correction d'un bug réel constaté en test (profil utilisateur, balise `{{heures_action_culturelle}}` avec un type inconnu `number`) : `gdocs.ts`/`pdf.ts` copiaient le template sur Drive **avant** de résoudre ses balises — une balise invalide levait donc son erreur *après* la copie, laissant un fichier orphelin (identique au template, aucun remplacement) jamais tracé dans `mmm_outputs` et donc jamais nettoyé par la purge (§3). Pour PDF c'était pire : le doc temporaire n'était jamais supprimé non plus. `googleDocsHelpers.ts` : `fillTemplateTags` (résolution + application en un seul appel, sur le même document) remplacé par deux fonctions séparées, `resolveTemplateTagsForDoc` (lit et résout les balises d'un document, ici toujours appelée sur `config.template_id`, avant toute copie) et `applyTemplateTags` (applique des balises déjà résolues via `batchUpdate`, appelée après `files.copy` sur le `fileId` de la copie). Voir §7 pour le détail des deux flux corrigés. **Fichier orphelin déjà créé lors du test ayant révélé ce bug : à supprimer manuellement sur Drive, mmmerge ne peut pas le retrouver rétroactivement (jamais tracé dans `mmm_outputs`).**
+>
+> **Résumé v10 (2026-07-22) :** Nouveaux modificateurs `prefix(texte)`/`suffix(texte)` dans `templateEngine.ts` (§3), génériques (tous types), conditionnés gratuitement par le court-circuit déjà existant pour cellule vide dans `resolveTagValue` (`applyModifiers` n'est jamais appelée pour une valeur vide). Le découpage des modificateurs (`parseModifiers`) passe d'un simple `.split(',')` à `splitModifiersRespectingParens`, conscient de la profondeur de parenthèses — ne coupe pas sur une virgule à l'intérieur de `prefix(...)`/`suffix(...)`, lève une `Erreur` explicite si les parenthèses ne s'équilibrent pas. Un `.trim()` uniforme (comme avant) reste suffisant : il ne touche que les extrémités de chaque modificateur déjà délimité par la virgule de plus haut niveau, jamais l'intérieur des parenthèses. Design initial envisagé (`prefix:`/`suffix:` sans parenthèses, contrainte de position "doit être en dernier" pour éviter l'ambiguïté du trim) abandonné avant d'être finalisé : la délimitation par parenthèses supprime cette contrainte entièrement.
 >
 > **Résumé v9 (2026-07-22) :** Suite à une relecture externe du code. `orchestrator.ts` gagne `validateResourceAccessibility`-adjacent : `--list` (retourne la liste des lignes éligibles sans construire `PipelineDeps` ni marquer/traiter aucune ligne) et `printSummary` (appelée en fin de `runPipeline`, hors branches `--validate`/`--list`/liste vide). `cliFlags.ts` gagne la constante `HELP_TEMPLATES` (contenu statique, testé pour présence des sections clés) consommée par `--help-templates` dans `cli.ts`, traité avant même la lecture du nom de profil. `folderResolver.ts`/`mail.ts` : les erreurs d'ambiguïté (dossier / fichier externe) incluent désormais les IDs Drive des éléments en conflit (déjà présents dans la réponse `files.list`, aucun appel supplémentaire).
 >
@@ -59,6 +86,7 @@ mmmerge/
 │   └── pipeline/
 │       ├── orchestrator.ts    # exécute les 3 phases dans l'ordre, pour chaque ligne éligible
 │       ├── deps.ts            # PipelineDeps : dépendances partagées par les modules, construites une fois par exécution
+│       ├── log.ts             # loggedStep : logging de progression en temps réel (actif par défaut, --quiet pour le couper)
 │       ├── rowContext.ts      # définition du type RowContext
 │       └── modules/
 │           ├── gdocs.ts               # génération des instances gDocs + resolveShareSettings
@@ -104,7 +132,7 @@ Chaque instance Mail résout ses propres pièces jointes en interne, via une fon
 
 ### Nommage technique des instances
 
-Avant l'exécution, l'orchestrateur annote chaque objet de configuration d'instance avec son identifiant technique de position (`gdocs[0]`, `pdf[1]`, `mail[0]`...), calculé à partir de son index dans le tableau du profil. Cet identifiant est distinct de la clé `name` (optionnelle, définie par l'utilisateur — specs.md §3) : l'identifiant technique sert de référence stable dans tout le système ; `name`, quand présent, ne fait que s'afficher en complément dans les messages d'erreur.
+Avant l'exécution, l'orchestrateur annote chaque objet de configuration d'instance avec son identifiant technique de position (`gdocs[0]`, `pdf[1]`, `mail[0]`...), calculé à partir de son index dans le tableau du profil. Cet identifiant est distinct de la clé `name` (optionnelle, définie par l'utilisateur — specs.md §3) : l'identifiant technique sert de référence stable dans tout le système ; `name`, quand présent, ne fait que s'afficher en complément dans les messages d'erreur. Une instance `disable: true` (specs.md §3) garde le même identifiant qu'une instance active à la même position — le `.entries()` du tableau n'est jamais filtré avant calcul de l'index, seulement après (dans la boucle d'exécution, `processRow`) — donc désactiver `gdocs[0]` ne renomme jamais `gdocs[1]` en `gdocs[0]`.
 
 ### Purge des sorties existantes en début de ligne
 
@@ -133,6 +161,45 @@ function parseSheetDate(moduleName: string, name: string, rawValue: string): Dat
   return new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
 }
 
+function parseSheetNumber(moduleName: string, name: string, rawValue: string): number {
+  const parsed = Number(rawValue);
+  if (Number.isNaN(parsed)) {
+    throw new ModuleError(moduleName, `Balise {{${name}}} : la valeur ne correspond pas à un nombre (cellule formatée en texte brut ?)`);
+  }
+  return parsed;
+}
+
+function formatNumberFr(value: number, decimals?: number, noGroup = false): string {
+  return new Intl.NumberFormat('fr-FR', {
+    useGrouping: !noGroup,
+    ...(decimals === undefined ? {} : { minimumFractionDigits: decimals, maximumFractionDigits: decimals }),
+  }).format(value);
+}
+
+// Vrai si la valeur, arrondie au centime le plus proche, a des centimes non nuls.
+// Number.EPSILON corrige l'imprécision flottante (12.335 est stocké en interne comme
+// 12.334999... qui arrondirait autrement vers le bas) — vérifié sur les 6 cas rapportés
+// par l'utilisateur, voir templateEngine.test.ts.
+function hasNonZeroCents(value: number): boolean {
+  const cents = Math.round((value + Number.EPSILON) * 100);
+  return cents % 100 !== 0;
+}
+
+// 0 décimale si le montant est rond, 2 sinon — sauf si `decimals` est fourni explicitement
+// (modificateur format:<n>), qui prime toujours sur cette règle automatique. `noGroup`
+// (modificateur nospace) retire uniquement le séparateur de milliers — l'espace insécable
+// avant "€" (généré par style: 'currency', indépendant de useGrouping) reste inchangé.
+function formatEuro(value: number, decimals?: number, noGroup = false): string {
+  const fractionDigits = decimals ?? (hasNonZeroCents(value) ? 2 : 0);
+  return new Intl.NumberFormat('fr-FR', {
+    style: 'currency',
+    currency: 'EUR',
+    useGrouping: !noGroup,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(value);
+}
+
 function applyModifiers(
   moduleName: string,
   name: string,
@@ -141,16 +208,42 @@ function applyModifiers(
   rawValue: string,
   defaultDateFormat: string,
 ): string {
-  let value = rawValue;
   const parsedDate = type === 'date' ? parseSheetDate(moduleName, name, rawValue) : null;
-  let formatApplied = false;
+  const parsedNumber = type === 'number' || type === 'euro' ? parseSheetNumber(moduleName, name, rawValue) : null;
+  // nospace n'est pas positionnel comme les autres modificateurs : il pilote le même appel
+  // Intl.NumberFormat que format:<n>, donc résolu une fois pour toutes ici (comme required),
+  // plutôt qu'appliqué à sa position — se combine avec format:<n> dans n'importe quel ordre.
+  const noGroup = modifiers.includes('nospace');
+
+  // Valeur de départ déjà mise en forme (format par défaut) pour date/number/euro — pas
+  // la valeur brute — pour que prefix(...)/suffix(...) sans format: explicite s'appliquent
+  // au texte réellement affiché plutôt que d'être écrasés en fin de parcours (voir v12).
+  let value = rawValue;
+  if (type === 'date') value = formatDate(parsedDate!, defaultDateFormat, { locale: fr });
+  if (type === 'number') value = formatNumberFr(parsedNumber!, undefined, noGroup);
+  if (type === 'euro') value = formatEuro(parsedNumber!, undefined, noGroup);
 
   for (const modifier of modifiers) {
     if (modifier === 'required') continue;
+    if (modifier === 'nospace') {
+      if (type !== 'number' && type !== 'euro') {
+        throw new ModuleError(moduleName, `Balise {{${name}}} : modificateur "nospace" incompatible avec le type "${type}"`);
+      }
+      continue; // déjà pris en compte dans noGroup ci-dessus
+    }
     if (modifier.startsWith('format:')) {
-      if (type !== 'date') throw new ModuleError(moduleName, `Balise {{${name}}} : modificateur "format" incompatible avec le type "${type}"`);
-      value = formatDate(parsedDate!, modifier.split(':')[1], { locale: fr });
-      formatApplied = true;
+      const arg = modifier.slice('format:'.length);
+      if (type === 'date') {
+        value = formatDate(parsedDate!, arg, { locale: fr });
+      } else if (type === 'number' || type === 'euro') {
+        const decimals = Number(arg);
+        if (!Number.isInteger(decimals) || decimals < 0) {
+          throw new ModuleError(moduleName, `Balise {{${name}}} : modificateur "format:${arg}" invalide pour le type "${type}" (attendu un nombre entier de décimales, ex: format:2)`);
+        }
+        value = type === 'number' ? formatNumberFr(parsedNumber!, decimals, noGroup) : formatEuro(parsedNumber!, decimals, noGroup);
+      } else {
+        throw new ModuleError(moduleName, `Balise {{${name}}} : modificateur "format" incompatible avec le type "${type}"`);
+      }
     } else if (modifier === 'initial') {
       if (type !== 'string') throw new ModuleError(moduleName, `Balise {{${name}}} : modificateur "initial" incompatible avec le type "${type}"`);
       value = value.charAt(0).toUpperCase() + '.';
@@ -169,9 +262,6 @@ function applyModifiers(
     }
   }
 
-  if (type === 'date' && !formatApplied) {
-    value = formatDate(parsedDate!, defaultDateFormat, { locale: fr });
-  }
   return value;
 }
 ```
@@ -270,12 +360,13 @@ L'API Gmail n'offre pas de méthode haut niveau pour composer un message avec pi
 ### Étapes de l'orchestrateur
 
 1. Charge et valide la configuration.
-2. S'authentifie (§2).
-3. Détermine la liste des lignes à traiter (filtre structurel + `--lines`/`--force`).
-4. Écrit `En cours d'exécution` (+ `mmm_last_run`) sur la première ligne. Liste vide → sortie propre (code `0`).
-5. Pour chaque ligne : purge les sorties existantes, construit un `RowContext` (`outputs: {}`), annote chaque instance avec son identifiant technique, puis exécute dans l'ordre : instances `gdocs[]` (création → écriture incrémentale → `resolveShareSettings` si configuré), instances `pdf[]` (création → écriture incrémentale), instances `mail[]` (composition/envoi → écriture incrémentale). Toute erreur interrompt la ligne et le script (§8). Succès complet → `SheetsWriter.closeRow` final, qui ouvre aussi la ligne suivante (`markInitialRow` fusionné dans le même appel) — "ligne suivante" désigne la prochaine ligne **éligible** de la liste déjà filtrée à l'étape 3, pas nécessairement `rowNumber + 1`.
-6. `--dry-run` : respecté individuellement par chaque module et `SheetsWriter`. Concrètement, chaque module (`gdocs`/`pdf`/`mail`) résout d'abord ses champs purs (nom de fichier, destinataires…, sans appel API), puis court-circuite avant tout appel Drive/Docs/Gmail réel si `dryRun` est actif, en écrivant une sortie synthétique (`url: '(dry-run)'`) via `SheetsWriter` — lui-même en écriture simulée (lectures réelles conservées).
-7. `--verbose` : implémenté au niveau de l'orchestrateur uniquement (log à chaque changement de ligne/instance en cours) — pas encore instrumenté à l'intérieur des modules pour chaque appel API individuel. `--verbose` ne changeant que la verbosité (jamais le comportement), cette implémentation partielle n'affecte pas la correction du pipeline.
+2. Si le profil contient au moins une instance `disable: true` (tous modules confondus), logge une notification unique les listant (`listDisabledInstances`) — avant toute authentification, et non affectée par `--quiet`.
+3. S'authentifie (§2).
+4. Détermine la liste des lignes à traiter (filtre structurel + `--lines`/`--force`).
+5. Écrit `En cours d'exécution` (+ `mmm_last_run`) sur la première ligne. Liste vide → sortie propre (code `0`).
+6. Pour chaque ligne : purge les sorties existantes, construit un `RowContext` (`outputs: {}`), annote chaque instance avec son identifiant technique, puis exécute dans l'ordre : instances `gdocs[]` (création → écriture incrémentale → `resolveShareSettings` si configuré), instances `pdf[]` (création → écriture incrémentale), instances `mail[]` (composition/envoi → écriture incrémentale) — une instance `disable: true` est sautée (`continue`) avant tout appel, **sans** consommer son tour dans l'exécution (mais son identifiant de position, lui, reste inchangé — §3, §6). Toute erreur interrompt la ligne et le script (§8). Succès complet → `SheetsWriter.closeRow` final, qui ouvre aussi la ligne suivante (`markInitialRow` fusionné dans le même appel) — "ligne suivante" désigne la prochaine ligne **éligible** de la liste déjà filtrée à l'étape 4, pas nécessairement `rowNumber + 1`.
+7. `--dry-run` : respecté individuellement par chaque module et `SheetsWriter`. Concrètement, chaque module (`gdocs`/`pdf`/`mail`) résout d'abord ses champs purs (nom de fichier, destinataires…, sans appel API), puis court-circuite avant tout appel Drive/Docs/Gmail réel si `dryRun` est actif, en écrivant une sortie synthétique (`url: '(dry-run)'`) via `SheetsWriter` — lui-même en écriture simulée (lectures réelles conservées).
+8. Logging de progression en temps réel (`loggedStep`, `pipeline/log.ts`) : actif par défaut, désactivable via `--quiet` (`deps.quiet`/`CliFlags.quiet`). Chaque appel réseau individuel (pas seulement les changements de ligne/instance) est enveloppé par `loggedStep`, qui logge `"<message>..."` juste avant l'appel puis `"<message> : OK"` une fois résolu avec succès — aucun `: OK` si l'appel échoue, ce qui situe déjà l'erreur avant même son message. Comme pour `--verbose` avant lui, `--quiet` ne change que la verbosité (jamais le comportement).
 
 ---
 
@@ -317,6 +408,21 @@ Mutation directe, exécution strictement séquentielle.
 
 `markInitialRow` / `closeRow`, batching à 3 cas. Chacune des trois méthodes (`markInitialRow`, `updateOutput`, `closeRow`) met aussi à jour `mmm_last_run` (format `d/M/yyyy HH:mm`) dans le même appel API.
 
+### Détection des colonnes en double (`findDuplicateHeaders`)
+
+`SheetsWriter.create` lit l'en-tête (`sheetTabName!1:1`) avant toute autre chose dans `runPipeline` (couvre donc aussi `--validate`). Juste après cette lecture, `findDuplicateHeaders` compte les occurrences de chaque titre non vide et retourne ceux apparaissant plus d'une fois — `Erreur` immédiate si le résultat est non vide, avant même la logique des colonnes `mmm_*` manquantes (qui deviendrait trompeuse sur un en-tête déjà incohérent). Un seul point de vérification : `readSheetRows` (orchestrator.ts §3), qui relit l'en-tête séparément pour construire `rawData` par ligne, s'exécute toujours après `SheetsWriter.create` dans `runPipeline` et n'a donc pas besoin de sa propre vérification.
+
+```ts
+function findDuplicateHeaders(headers: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const header of headers) {
+    if (header === '') continue;
+    counts.set(header, (counts.get(header) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name);
+}
+```
+
 ### Construction du message d'erreur final (`resolveInstanceName`)
 
 ```ts
@@ -353,10 +459,12 @@ import { readFileSync } from 'node:fs';
 const InstanceMetaSchema = z.object({
   name: z.string().max(80).optional(),
   description: z.string().max(500).optional(),
+  disable: z.boolean().optional().default(false),
 });
 
 const FileModuleFieldsSchema = z.object({
   template_id: z.string(),
+  template_link: z.string().optional(),
   output_folder: z.string().optional(),
   output_folder_id: z.string().optional(),
   output_filename: z.string(),
@@ -425,6 +533,10 @@ const ProfileSchema = z.object({
     ...config.gdocs.map((_, i) => `gdocs[${i}]`),
     ...pdfRefs,
   ]);
+  const disabledRefs = new Set([
+    ...config.gdocs.flatMap((instance, i) => (instance.disable ? [`gdocs[${i}]`] : [])),
+    ...config.pdf.flatMap((instance, i) => (instance.disable ? [`pdf[${i}]`] : [])),
+  ]);
 
   const LINK_TAG_PATTERN = /\{\{link:([a-zA-Z]+\[\d+\])\}\}/g;
   const extractLinkRefs = (text: string) => [...text.matchAll(LINK_TAG_PATTERN)].map((m) => m[1]);
@@ -434,6 +546,8 @@ const ProfileSchema = z.object({
     for (const ref of mailInstance.generated) {
       if (!pdfRefs.has(ref)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `mail[${mailIndex}].generated : "${ref}" doit référencer une instance pdf[] (un gDoc ne peut pas être joint à un email)` });
+      } else if (disabledRefs.has(ref)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `mail[${mailIndex}].generated : "${ref}" est désactivée (disable: true) — impossible de la joindre.` });
       }
       if (seenGenerated.has(ref)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `mail[${mailIndex}].generated : référence "${ref}" dupliquée` });
@@ -455,6 +569,8 @@ const ProfileSchema = z.object({
       for (const ref of extractLinkRefs(field)) {
         if (!linkableRefs.has(ref)) {
           ctx.addIssue({ code: z.ZodIssueCode.custom, message: `mail[${mailIndex}] : {{link:${ref}}} référence une instance introuvable` });
+        } else if (disabledRefs.has(ref)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `mail[${mailIndex}] : {{link:${ref}}} référence une instance désactivée (disable: true)` });
         }
       }
     }
@@ -464,13 +580,15 @@ const ProfileSchema = z.object({
 
 Toutes ces validations sont **statiques** — détectables via `--validate` sans lire une seule ligne du Sheet. Elles s'exécutent à chaque lancement (au chargement de la config, via `loadConfig`), pas seulement avec `--validate`.
 
+`template_link` (`FileModuleFieldsSchema`, donc `gdocs`/`pdf` uniquement) : aucune logique associée nulle part dans le code — ni lu par un module, ni vérifié par `superRefine`, ni par `validateResourceAccessibility` (§6). Un simple champ de type `string` optionnel, présent uniquement pour être visible dans le profil JSON.
+
 ### Emplacement du fichier de profil
 
 `configs/<nom-du-profil>.json` (`loader.ts`) — un fichier par profil, nommé exactement comme l'argument positionnel de la commande (`mmmerge <profil>`).
 
 ### `--validate`
 
-En plus des validations statiques ci-dessus (déjà systématiques), `--validate` authentifie, résout les colonnes `mmm_*` via `SheetsWriter.create`, puis vérifie l'accessibilité Drive de chaque `template_id`/`output_folder_id` référencé par `gdocs[]`/`pdf[]` (`validateResourceAccessibility`, `orchestrator.ts`) — un `drive.files.get` par ressource, en parallèle, toutes les ressources introuvables étant rapportées ensemble plutôt qu'au premier échec. Ne lit aucune ligne de données : `output_folder` (chemin dynamique) n'est donc pas vérifiable par cette voie.
+En plus des validations statiques ci-dessus (déjà systématiques), `--validate` authentifie, résout les colonnes `mmm_*` via `SheetsWriter.create`, puis vérifie l'accessibilité Drive de chaque `template_id`/`output_folder_id` référencé par les instances `gdocs[]`/`pdf[]` **non désactivées** (`validateResourceAccessibility`, `orchestrator.ts`, filtre `!instance.disable` avant construction de la liste à vérifier) — un `drive.files.get` par ressource, en parallèle, toutes les ressources introuvables étant rapportées ensemble plutôt qu'au premier échec. Ne lit aucune ligne de données : `output_folder` (chemin dynamique) n'est donc pas vérifiable par cette voie.
 
 ### `--init-columns`
 
@@ -486,11 +604,15 @@ Substitution de balises via `renderTemplateString`, cache par exécution, créat
 
 ### Copie du template (instances gDocs)
 
-`files.copy` → `documents.batchUpdate` (via `resolveTemplateTags`) → **écriture incrémentale de `mmm_outputs`/`mmm_last_run`** (§5) → si `share` configuré, `resolveShareSettings` (§3). L'écriture incrémentale précède délibérément le partage. URL stockée : `https://docs.google.com/document/d/<fileId>/edit` (format standard Google, non documenté ailleurs).
+`resolveTemplateTagsForDoc` (lit et résout les balises du **template lui-même**, `config.template_id`, avant toute copie) → `files.copy` → `applyTemplateTags` (`documents.batchUpdate` avec les balises déjà résolues) → **écriture incrémentale de `mmm_outputs`/`mmm_last_run`** (§5) → si `share` configuré, `resolveShareSettings` (§3). L'écriture incrémentale précède délibérément le partage. URL stockée : `https://docs.google.com/document/d/<fileId>/edit` (format standard Google, non documenté ailleurs).
+
+Résoudre les balises **avant** `files.copy` est délibéré : si une balise du template est invalide (type inconnu, `required` sur cellule vide, modificateur inconnu…), l'erreur est levée avant qu'aucun fichier Drive n'existe — sinon la copie, déjà créée, ne serait jamais nettoyée (elle n'est écrite dans `mmm_outputs` qu'après le remplissage réussi, donc invisible à la purge du prochain run — §3). Comme une copie fraîche a un contenu strictement identique au template au moment de la copie, résoudre les balises sur `template_id` puis les appliquer sur le `fileId` de la copie est équivalent à tout faire sur la copie, sans le risque de fichier orphelin.
 
 ### Cycle interne des instances PDF
 
-`files.copy` (temporaire, nommé `[tmp] <nom final>`, pas de parent — racine Drive, sans conséquence puisqu'il est supprimé) → `documents.batchUpdate` → `files.export` (`mimeType: 'application/pdf'`, `responseType: 'stream'`) → `files.create` (destination finale, `media.body` = le flux exporté) → `files.delete` (suppression définitive du temporaire, pas une mise à la corbeille) → écriture incrémentale. URL stockée : `https://drive.google.com/file/d/<fileId>/view` — confirmée par l'exemple `mmm_outputs` de specs.md §1.
+`resolveTemplateTagsForDoc` sur `config.template_id` (même logique et même motivation anti-orphelin que pour gDocs, ci-dessus — particulièrement important ici car le doc temporaire ne serait sinon jamais supprimé) → `files.copy` (temporaire, nommé `[tmp] <nom rendu, sans extension>` — le doc temporaire n'est pas un PDF, son nom ne doit donc pas en porter l'extension) → `applyTemplateTags` → `files.export` (`mimeType: 'application/pdf'`, `responseType: 'stream'`) → `files.create` (destination finale, nom = `ensurePdfExtension(<nom rendu>)`, `media.body` = le flux exporté) → `files.delete` (suppression définitive du temporaire, pas une mise à la corbeille) → écriture incrémentale (`filename` inclut l'extension). URL stockée : `https://drive.google.com/file/d/<fileId>/view` — confirmée par l'exemple `mmm_outputs` de specs.md §1.
+
+`ensurePdfExtension(filename: string): string` (`pdf.ts`) : ajoute `.pdf` si le nom rendu ne se termine pas déjà par `.pdf`/`.PDF` (`/\.pdf$/i`) — jamais de doublon. Motivé par un signalement utilisateur : `drive.files.create` ne déduit jamais d'extension à partir du `mimeType` fourni, contrairement à un upload via l'UI Drive — sans cette fonction, le fichier final (et par ricochet `output.filename`, utilisé tel quel comme nom de pièce jointe par `mail.ts` en mode `generated`) n'avait aucune extension.
 
 ### Recherche des fichiers externes (résolution interne à chaque instance Mail)
 
@@ -504,4 +626,6 @@ Voir §3 ("Purge des sorties existantes en début de ligne").
 
 ## 8. Gestion des Erreurs
 
-`ModuleError` (avec `module` incluant l'instance en cause), un seul `try/catch` dans l'orchestrateur englobant les trois phases, écriture confirmée du statut avant `process.exit(1)`, codes de sortie `0`/`1`, `--verbose` n'affecte que la verbosité du log.
+`ModuleError` (avec `module` incluant l'instance en cause), un seul `try/catch` dans l'orchestrateur englobant les trois phases, écriture confirmée du statut avant `process.exit(1)`, codes de sortie `0`/`1`, `--quiet` n'affecte que la verbosité du log de progression (`pipeline/log.ts`), jamais la présentation des erreurs.
+
+**Erreur non interceptée au niveau `main()` (`cli.ts`)** : message seul (`Erreur : <message>`), **toujours**, jamais la trace de pile brute, quel que soit `--quiet`. Toute erreur fatale de cette application a un message explicite et actionnable par construction (`ModuleError`, erreurs de config Zod déjà formatées par `formatZodError`, erreurs `--lines`/Sheet/`SheetsWriter.create` déjà enrichies de contexte) — une trace technique n'ajoute jamais d'information utile pour l'utilisateur final, seulement du bruit qui peut faire passer une erreur de saisie anodine (ex: `--lines=1`, qui cible la ligne d'en-tête) pour un crash. Ce comportement a une histoire : introduit une première fois (commit `cd2ccce`), il a été accidentellement inversé lors de l'introduction de `--quiet` (v13) — le renommage `--verbose`→`--quiet` avait mécaniquement inversé aussi cette logique, alors que les deux n'ont aucun rapport (l'une concerne le logging de progression, l'autre la présentation finale d'une erreur fatale). Corrigé (v18) en découplant complètement les deux : la présentation d'erreur ne dépend plus d'aucun flag.

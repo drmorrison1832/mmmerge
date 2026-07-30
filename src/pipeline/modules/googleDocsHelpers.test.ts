@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { docs_v1, drive_v3 } from 'googleapis';
 import {
   resolveOutputFolderId,
-  fillTemplateTags,
+  resolveTemplateTagsForDoc,
+  applyTemplateTags,
   driveRole,
   resolveShareSettings,
 } from './googleDocsHelpers.js';
@@ -40,10 +41,35 @@ function createMockDrive() {
   return { drive, list, create, permissionsCreate };
 }
 
-describe('fillTemplateTags', () => {
-  it('remplace les balises trouvées dans un paragraphe simple', async () => {
-    const { docs, batchUpdate } = createMockDocs([paragraphOf('Bonjour {{Nom}}')]);
-    await fillTemplateTags('gdocs[0]', docs, 'doc-id', { Nom: 'Marie' }, 'd/M/yyyy');
+describe('resolveTemplateTagsForDoc', () => {
+  it('résout les balises trouvées dans un paragraphe simple', async () => {
+    const { docs, get } = createMockDocs([paragraphOf('Bonjour {{Nom}}')]);
+    const tags = await resolveTemplateTagsForDoc('gdocs[0]', docs, 'doc-id', { Nom: 'Marie' }, 'd/M/yyyy');
+
+    expect(get).toHaveBeenCalledWith({ documentId: 'doc-id' });
+    expect(tags).toEqual([{ fullMatch: '{{Nom}}', value: 'Marie' }]);
+  });
+
+  it('trouve les balises imbriquées dans un tableau', async () => {
+    const { docs } = createMockDocs([tableOf([['{{Ville}}', 'autre cellule']])]);
+    const tags = await resolveTemplateTagsForDoc('gdocs[0]', docs, 'doc-id', { Ville: 'Lyon' }, 'd/M/yyyy');
+
+    expect(tags).toEqual([{ fullMatch: '{{Ville}}', value: 'Lyon' }]);
+  });
+
+  it('lève une erreur si une balise est invalide, sans avoir rien copié ni modifié', async () => {
+    const { docs } = createMockDocs([paragraphOf('Bonjour {{heures:boolean}}')]);
+
+    await expect(
+      resolveTemplateTagsForDoc('gdocs[0]', docs, 'doc-id', { heures: '3' }, 'd/M/yyyy'),
+    ).rejects.toThrow(/type "boolean" inconnu/);
+  });
+});
+
+describe('applyTemplateTags', () => {
+  it('remplace les balises déjà résolues via batchUpdate', async () => {
+    const { docs, batchUpdate } = createMockDocs([]);
+    await applyTemplateTags(docs, 'doc-id', [{ fullMatch: '{{Nom}}', value: 'Marie' }]);
 
     expect(batchUpdate).toHaveBeenCalledWith({
       documentId: 'doc-id',
@@ -55,23 +81,9 @@ describe('fillTemplateTags', () => {
     });
   });
 
-  it('trouve les balises imbriquées dans un tableau', async () => {
-    const { docs, batchUpdate } = createMockDocs([tableOf([['{{Ville}}', 'autre cellule']])]);
-    await fillTemplateTags('gdocs[0]', docs, 'doc-id', { Ville: 'Lyon' }, 'd/M/yyyy');
-
-    expect(batchUpdate).toHaveBeenCalledWith({
-      documentId: 'doc-id',
-      requestBody: {
-        requests: [
-          { replaceAllText: { containsText: { text: '{{Ville}}', matchCase: true }, replaceText: 'Lyon' } },
-        ],
-      },
-    });
-  });
-
-  it("n'appelle pas batchUpdate si aucune balise n'est présente", async () => {
-    const { docs, batchUpdate } = createMockDocs([paragraphOf('Aucune balise ici.')]);
-    await fillTemplateTags('gdocs[0]', docs, 'doc-id', {}, 'd/M/yyyy');
+  it("n'appelle pas batchUpdate si la liste de balises est vide", async () => {
+    const { docs, batchUpdate } = createMockDocs([]);
+    await applyTemplateTags(docs, 'doc-id', []);
 
     expect(batchUpdate).not.toHaveBeenCalled();
   });

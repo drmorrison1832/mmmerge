@@ -96,6 +96,32 @@ describe('SheetsWriter.create', () => {
     await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB, false, true);
     expect(mock.update).not.toHaveBeenCalled();
   });
+
+  it('lève une erreur explicite si deux colonnes partagent le même titre', async () => {
+    const mock = createMockSheetsClient({
+      [`${SHEET_TAB}!1:1`]: [['Nom', 'Nom', 'mmm_status', 'mmm_outputs', 'mmm_last_run']],
+    });
+    await expect(SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB)).rejects.toThrow(
+      /en double.*Nom/s,
+    );
+  });
+
+  it('lève une erreur pour un doublon parmi les colonnes réservées elles-mêmes', async () => {
+    const mock = createMockSheetsClient({
+      [`${SHEET_TAB}!1:1`]: [['Nom', 'mmm_status', 'mmm_status', 'mmm_outputs', 'mmm_last_run']],
+    });
+    await expect(SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB)).rejects.toThrow(
+      /en double.*mmm_status/s,
+    );
+  });
+
+  it('ignore les en-têtes vides (ne les compte pas comme doublons)', async () => {
+    const mock = createMockSheetsClient({
+      [`${SHEET_TAB}!1:1`]: [['Nom', '', '', 'mmm_status', 'mmm_outputs', 'mmm_last_run']],
+    });
+    const writer = await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB);
+    expect(writer).toBeInstanceOf(SheetsWriter);
+  });
 });
 
 describe('markInitialRow', () => {
@@ -152,7 +178,7 @@ const baseProfile: Config = {
   autoCreateFolders: true,
   defaultDateFormat: 'd/M/yyyy',
   gdocs: [],
-  pdf: [{ template_id: 't', output_folder: 'f', output_filename: 'n', name: 'Copie archives' }],
+  pdf: [{ disable: false, template_id: 't', output_folder: 'f', output_filename: 'n', name: 'Copie archives' }],
   mail: [],
 };
 
@@ -180,7 +206,7 @@ describe('closeRow', () => {
   it('omet le nom entre parenthèses si l\'instance n\'a pas de name', async () => {
     const { writer, cells } = await createWriter();
     const context = { rowNumber: 5, rawData: {}, outputs: {}, error: { module: 'gdocs[0]', message: 'boom' } };
-    await writer.closeRow(context, { ...baseProfile, gdocs: [{ template_id: 't', output_folder: 'f', output_filename: 'n' }] });
+    await writer.closeRow(context, { ...baseProfile, gdocs: [{ disable: false, template_id: 't', output_folder: 'f', output_filename: 'n' }] });
 
     expect(cells.get(`${SHEET_TAB}!B5`)).toEqual([['Erreur: gdocs[0] - boom']]);
   });

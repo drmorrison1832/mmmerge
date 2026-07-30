@@ -20,6 +20,41 @@ Type "date" :
   format:<token>   - format date-fns (ex: MMMM, yyyy, d/M/yyyy), locale française
                      sans "format:", utilise defaultDateFormat du profil
 
+  Tokens date-fns courants (mardi 21 juillet 2026, locale française) :
+    d     jour du mois              21
+    dd    jour du mois, 2 chiffres  21
+    M     mois numérique            7
+    MM    mois numérique, 2 chiffres 07
+    MMM   mois abrégé               juil.
+    MMMM  mois complet              juillet
+    yy    année, 2 chiffres         26
+    yyyy  année, 4 chiffres         2026
+    EEE   jour semaine abrégé       mar.
+    EEEE  jour semaine complet      mardi
+    HH    heure (24h), 2 chiffres   14
+    mm    minutes, 2 chiffres       32
+    ss    secondes, 2 chiffres      05
+  Combinables librement : format:EEEE d MMMM yyyy → mardi 21 juillet 2026
+  Liste complète : https://date-fns.org/docs/format
+
+Type "number" :
+  format:<n>       - nombre fixe de décimales (ex: format:2)
+                     sans "format:", format français par défaut (séparateur
+                     milliers, virgule décimale) : 1123.43 → "1\u00A0123,43"
+  nospace          - retire le séparateur de milliers (number ET euro,
+                     voir plus bas) : 1123.43 → "1123,43" (pas de "1\u00A0123,43")
+
+Type "euro" :
+  format:<n>       - impose un nombre fixe de décimales (prioritaire sur la
+                     règle automatique ci-dessous)
+                     sans "format:" : 0 décimale si le montant est rond, 2 sinon
+                     (ex: 12 → "12\u00A0€", 12,3 → "12,30\u00A0€", arrondi au centime)
+                     séparateur milliers en espace fine insécable, ex: 1234.5 → "1\u202F234,50\u00A0€"
+  nospace          - retire le séparateur de milliers, garde l'espace insécable
+                     avant "€" : 1234.56 → "1234,56\u00A0€" (pas de "1\u202F234,56\u00A0€")
+                     se combine avec format:<n> dans n'importe quel ordre —
+                     seul modificateur non positionnel de la liste
+
 prefix(texte) / suffix(texte) :
   ajoute "texte" avant/après la valeur, uniquement si la cellule n'est pas vide —
   pratique pour chaîner des champs optionnels sans espace double ni orphelin.
@@ -35,6 +70,18 @@ Référence à une sortie déjà générée (mail uniquement — to/cc/subject/c
 Exemple :
   {{nom:string[required, uppercase]}} {{date:date[required, format:MMMM yyyy]}}
   → DUPONT juillet 2026
+
+Exemple (nombre avec unité) :
+  {{brut_total:number[required, suffix( €)]}}
+  avec brut_total = 1123.43 → 1\u202F123,43 €
+
+Exemple (montant en euros) :
+  {{brut_total:euro[required]}}
+  avec brut_total = 1123.43 → 1\u202F123,43\u00A0€
+
+Exemple (euro sans espace, pour un champ qui les rejette) :
+  {{brut_total:euro[required, nospace]}}
+  avec brut_total = 1123.43 → 1123,43\u00A0€
 
 Exemple (champs optionnels sans espaces doubles) :
   {{prenom1}}{{prenom2[prefix( )]}}{{prenom3[prefix( )]}} {{nom}}

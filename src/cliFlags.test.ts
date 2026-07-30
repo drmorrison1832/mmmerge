@@ -34,5 +34,9 @@ describe('HELP_TEMPLATES', () => {
     expect(HELP_TEMPLATES).toContain('format:<token>');
     expect(HELP_TEMPLATES).toContain('prefix(texte)');
     expect(HELP_TEMPLATES).toContain('{{link:gdocs[0]}}');
+    expect(HELP_TEMPLATES).toContain('Type "number"');
+    expect(HELP_TEMPLATES).toContain('Type "euro"');
+    expect(HELP_TEMPLATES).toContain('nospace');
+    expect(HELP_TEMPLATES).toContain('MMMM');
   });
 });

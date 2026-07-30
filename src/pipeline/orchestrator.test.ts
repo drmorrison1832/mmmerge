@@ -43,7 +43,7 @@ function baseCliFlags(overrides: Partial<CliFlags> = {}): CliFlags {
   return {
     dryRun: false,
     force: false,
-    verbose: false,
+    quiet: true,
     validate: false,
     initColumns: false,
     list: false,
@@ -57,7 +57,7 @@ function baseProfile(overrides: Partial<Config> = {}): Config {
     sheetTabName: SHEET_TAB,
     autoCreateFolders: true,
     defaultDateFormat: 'd/M/yyyy',
-    gdocs: [{ template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' }],
+    gdocs: [{ disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' }],
     pdf: [],
     mail: [],
     ...overrides,
@@ -90,7 +90,7 @@ describe('validateResourceAccessibility', () => {
 
   it('ne vérifie pas output_folder_id quand seul output_folder (chemin dynamique) est configuré', async () => {
     const profile = baseProfile({
-      gdocs: [{ template_id: 'template-id', output_folder: 'Contrats/{{Annee}}', output_filename: 'x' }],
+      gdocs: [{ disable: false, template_id: 'template-id', output_folder: 'Contrats/{{Annee}}', output_filename: 'x' }],
     });
     const { drive, get } = createMockDriveForFiles(['template-id']);
     const problems = await validateResourceAccessibility(drive, profile);
@@ -101,13 +101,24 @@ describe('validateResourceAccessibility', () => {
 
   it('vérifie aussi les instances pdf[]', async () => {
     const profile = baseProfile({
-      pdf: [{ template_id: 'pdf-template', output_folder_id: 'pdf-folder', output_filename: 'x' }],
+      pdf: [{ disable: false, template_id: 'pdf-template', output_folder_id: 'pdf-folder', output_filename: 'x' }],
     });
     const drive = createMockDriveForFiles(['template-id', 'folder-id']).drive; // pdf-template/pdf-folder absents
     const problems = await validateResourceAccessibility(drive, profile);
 
     expect(problems).toContainEqual(expect.stringContaining('pdf[0].template_id'));
     expect(problems).toContainEqual(expect.stringContaining('pdf[0].output_folder_id'));
+  });
+
+  it('ignore les instances désactivées (aucune vérification Drive)', async () => {
+    const { drive, get } = createMockDriveForFiles([]); // rien n'existe
+    const profile = baseProfile({
+      gdocs: [{ disable: true, template_id: 'broken', output_folder_id: 'f', output_filename: 'x' }],
+    });
+    const problems = await validateResourceAccessibility(drive, profile);
+
+    expect(problems).toEqual([]);
+    expect(get).not.toHaveBeenCalled();
   });
 });
 
@@ -238,7 +249,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): {
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
     dryRun: false,
-    verbose: false,
+    quiet: true,
     ...overrides,
   };
   return { deps, updateOutput, closeRow };
@@ -275,11 +286,28 @@ describe('processRow', () => {
   it("n'exécute pas pdf[]/mail[] après l'échec d'une instance gdocs[]", async () => {
     const { deps } = createDeps();
     (deps.drive.files.copy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'));
-    const profile = baseProfile({ pdf: [{ template_id: 't2', output_folder_id: 'f', output_filename: 'n' }] });
+    const profile = baseProfile({ pdf: [{ disable: false, template_id: 't2', output_folder_id: 'f', output_filename: 'n' }] });
 
     await processRow(makeRow(), profile, deps, undefined);
 
     expect(deps.drive.files.copy).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignore une instance désactivée (jamais appelée) en conservant les index des autres', async () => {
+    const { deps, updateOutput } = createDeps();
+    const profile = baseProfile({
+      gdocs: [
+        { disable: true, template_id: 'broken', output_folder_id: 'f', output_filename: 'skip' },
+        { disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' },
+      ],
+    });
+
+    const success = await processRow(makeRow(), profile, deps, undefined);
+
+    expect(success).toBe(true);
+    expect(deps.drive.files.copy).toHaveBeenCalledTimes(1);
+    expect(updateOutput).toHaveBeenCalledWith(5, 'gdocs[1]', expect.anything());
+    expect(updateOutput).not.toHaveBeenCalledWith(5, 'gdocs[0]', expect.anything());
   });
 });
 
@@ -415,6 +443,30 @@ describe('runPipeline (intégration)', () => {
     const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
     expect(logged).toContain('Lignes traitées avec succès : 2');
     expect(logged).toContain('Documents gDocs générés : 2');
+    logSpy.mockRestore();
+  });
+
+  it('annonce les modules désactivés au démarrage et les exclut du décompte du résumé', async () => {
+    const { sheets } = createMockSheetsClient([['Dupont', '', '', '']]);
+    const { drive, copy } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const profile = baseProfile({
+      gdocs: [
+        { disable: true, template_id: 'broken', output_folder_id: 'f', output_filename: 'skip' },
+        { disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' },
+      ],
+    });
+
+    await runPipeline(profile, baseCliFlags());
+
+    expect(copy).toHaveBeenCalledTimes(1);
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('Module(s) désactivé(s) : gdocs[0].');
+    expect(logged).toContain('Documents gDocs générés : 1');
     logSpy.mockRestore();
   });
 

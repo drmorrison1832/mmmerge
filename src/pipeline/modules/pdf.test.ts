@@ -41,7 +41,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
     dryRun: false,
-    verbose: false,
+    quiet: true,
     ...overrides,
   };
   return { deps, updateOutput };
@@ -49,6 +49,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
 
 function baseConfig(overrides: Partial<PdfInstance> = {}): PdfInstance {
   return {
+    disable: false,
     template_id: 'template-id',
     output_folder_id: 'folder-id',
     output_filename: 'CDDU {{Nom}}',
@@ -73,7 +74,7 @@ describe('runPdfInstance', () => {
       fileId: 'template-id',
       requestBody: { name: '[tmp] CDDU Dupont' },
     });
-    expect(get).toHaveBeenCalledWith({ documentId: 'temp-doc-id' });
+    expect(get).toHaveBeenCalledWith({ documentId: 'template-id' });
     expect(batchUpdate).toHaveBeenCalledOnce();
 
     expect(exportFn).toHaveBeenCalledWith(
@@ -82,14 +83,14 @@ describe('runPdfInstance', () => {
     );
 
     expect(create).toHaveBeenCalledWith({
-      requestBody: { name: 'CDDU Dupont', parents: ['folder-id'] },
+      requestBody: { name: 'CDDU Dupont.pdf', parents: ['folder-id'] },
       media: { mimeType: 'application/pdf', body: FAKE_PDF_STREAM },
     });
 
     expect(del).toHaveBeenCalledWith({ fileId: 'temp-doc-id' });
 
     expect(context.outputs['pdf[0]']).toEqual({
-      filename: 'CDDU Dupont',
+      filename: 'CDDU Dupont.pdf',
       url: 'https://drive.google.com/file/d/final-pdf-id/view',
       createdAt: expect.any(String),
     });
@@ -107,6 +108,22 @@ describe('runPdfInstance', () => {
     expect(deleteOrder).toBeLessThan(updateOutputOrder);
   });
 
+  it("ne copie pas le template si une balise du template est invalide (pas de fichier orphelin)", async () => {
+    const body: docs_v1.Schema$Body = {
+      content: [{ paragraph: { elements: [{ textRun: { content: 'Bonjour {{Nom:boolean}}' } }] } }],
+    };
+    const get = vi.fn(async () => ({ data: { body } }));
+    const docs = { documents: { get, batchUpdate: vi.fn() } } as unknown as docs_v1.Docs;
+    const { drive, copy } = createMockDrive();
+    const { deps } = createDeps({ docs, drive });
+
+    await expect(runPdfInstance('pdf[0]', baseConfig(), baseContext(), deps)).rejects.toThrow(
+      /type "boolean" inconnu/,
+    );
+
+    expect(copy).not.toHaveBeenCalled();
+  });
+
   it("n'appelle aucune API Google en mode dry-run, écrit une sortie synthétique", async () => {
     const { drive, copy } = createMockDrive();
     const { deps, updateOutput } = createDeps({ drive, dryRun: true });
@@ -116,10 +133,37 @@ describe('runPdfInstance', () => {
 
     expect(copy).not.toHaveBeenCalled();
     expect(context.outputs['pdf[0]']).toEqual({
-      filename: 'CDDU Dupont',
+      filename: 'CDDU Dupont.pdf',
       url: '(dry-run)',
       createdAt: expect.any(String),
     });
     expect(updateOutput).toHaveBeenCalledWith(5, 'pdf[0]', context.outputs['pdf[0]']);
+  });
+
+  it('ajoute ".pdf" au nom de fichier final, mais pas au nom du document temporaire', async () => {
+    const { drive, copy, create } = createMockDrive();
+    const { deps } = createDeps({ drive });
+
+    await runPdfInstance('pdf[0]', baseConfig(), baseContext(), deps);
+
+    expect(copy).toHaveBeenCalledWith({
+      fileId: 'template-id',
+      requestBody: { name: '[tmp] CDDU Dupont' },
+    });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ requestBody: expect.objectContaining({ name: 'CDDU Dupont.pdf' }) }),
+    );
+  });
+
+  it('ne double pas l\'extension si "output_filename" se termine déjà par .pdf (insensible à la casse)', async () => {
+    const { drive, create } = createMockDrive();
+    const { deps } = createDeps({ drive });
+    const config = baseConfig({ output_filename: 'CDDU {{Nom}}.PDF' });
+
+    await runPdfInstance('pdf[0]', config, baseContext(), deps);
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ requestBody: expect.objectContaining({ name: 'CDDU Dupont.PDF' }) }),
+    );
   });
 });

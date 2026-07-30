@@ -11,11 +11,12 @@ import { runPdfInstance } from './modules/pdf.js';
 import { runMailInstance } from './modules/mail.js';
 import { ModuleError, type RowContext } from './rowContext.js';
 import type { PipelineDeps } from './deps.js';
+import { loggedStep } from './log.js';
 
 export type CliFlags = {
   dryRun: boolean;
   force: boolean;
-  verbose: boolean;
+  quiet: boolean;
   validate: boolean;
   /** Crée les colonnes système mmm_* manquantes au lieu de lever une erreur. */
   initColumns: boolean;
@@ -36,12 +37,19 @@ export function isStatusEligible(status: string): boolean {
   return status === '' || status === "En cours d'exécution" || status.startsWith('Erreur:');
 }
 
-async function readSheetRows(sheets: sheets_v4.Sheets, sheetId: string, sheetTabName: string): Promise<SheetRow[]> {
-  const { data } = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: sheetTabName,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
+async function readSheetRows(
+  sheets: sheets_v4.Sheets,
+  sheetId: string,
+  sheetTabName: string,
+  quiet: boolean,
+): Promise<SheetRow[]> {
+  const { data } = await loggedStep(quiet, 'Lecture des lignes du Sheet', () =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: sheetTabName,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    }),
+  );
   const values = data.values ?? [];
   const headers = (values[0] ?? []).map((header) => String(header));
   const statusIndex = headers.indexOf('mmm_status');
@@ -68,13 +76,16 @@ async function readHiddenRowNumbers(
   sheets: sheets_v4.Sheets,
   sheetId: string,
   sheetTabName: string,
+  quiet: boolean,
 ): Promise<Set<number>> {
-  const { data } = await sheets.spreadsheets.get({
-    spreadsheetId: sheetId,
-    ranges: [sheetTabName],
-    includeGridData: true,
-    fields: 'sheets(data(rowMetadata(hiddenByUser,hiddenByFilter)))',
-  });
+  const { data } = await loggedStep(quiet, 'Vérification des lignes masquées', () =>
+    sheets.spreadsheets.get({
+      spreadsheetId: sheetId,
+      ranges: [sheetTabName],
+      includeGridData: true,
+      fields: 'sheets(data(rowMetadata(hiddenByUser,hiddenByFilter)))',
+    }),
+  );
   const rowMetadata = data.sheets?.[0]?.data?.[0]?.rowMetadata ?? [];
   const hidden = new Set<number>();
   rowMetadata.forEach((meta, index) => {
@@ -105,7 +116,7 @@ export async function validateResourceAccessibility(
   const instances = [
     ...profile.gdocs.map((instance, index) => ({ instance, ref: `gdocs[${index}]` })),
     ...profile.pdf.map((instance, index) => ({ instance, ref: `pdf[${index}]` })),
-  ];
+  ].filter(({ instance }) => !instance.disable);
 
   await Promise.all(
     instances.flatMap(({ instance, ref }) => {
@@ -148,6 +159,7 @@ export async function purgeRowOutputs(
   drive: PipelineDeps['drive'],
   sheetsWriter: SheetsWriter,
   row: SheetRow,
+  quiet = true,
 ): Promise<void> {
   let existingOutputs: Record<string, { url?: string }> = {};
   if (row.outputsRaw) {
@@ -164,6 +176,7 @@ export async function purgeRowOutputs(
     if (!url) continue;
     try {
       const fileId = extractDriveFileId(url);
+      if (!quiet) console.log(`Ligne ${row.rowNumber} : mise à la corbeille de "${key}"...`);
       await drive.files.update({ fileId, requestBody: { trashed: true } });
       console.warn(`Ligne ${row.rowNumber} : fichier "${key}" mis à la corbeille (purge avant régénération).`);
     } catch (err) {
@@ -175,13 +188,28 @@ export async function purgeRowOutputs(
 }
 
 function printSummary(processedRows: number, profile: Config, failure?: { rowNumber: number }): void {
+  const activeCount = <T extends { disable?: boolean }>(instances: T[]): number =>
+    instances.filter((instance) => !instance.disable).length;
+  const gdocsCount = activeCount(profile.gdocs);
+  const pdfCount = activeCount(profile.pdf);
+  const mailCount = activeCount(profile.mail);
+
   console.log('');
   console.log('Résumé :');
   console.log(`  Lignes traitées avec succès : ${processedRows}`);
-  if (profile.gdocs.length > 0) console.log(`  Documents gDocs générés : ${processedRows * profile.gdocs.length}`);
-  if (profile.pdf.length > 0) console.log(`  Fichiers PDF générés : ${processedRows * profile.pdf.length}`);
-  if (profile.mail.length > 0) console.log(`  Emails composés : ${processedRows * profile.mail.length}`);
+  if (gdocsCount > 0) console.log(`  Documents gDocs générés : ${processedRows * gdocsCount}`);
+  if (pdfCount > 0) console.log(`  Fichiers PDF générés : ${processedRows * pdfCount}`);
+  if (mailCount > 0) console.log(`  Emails composés : ${processedRows * mailCount}`);
   if (failure) console.log(`  Erreur sur la ligne ${failure.rowNumber} — script interrompu.`);
+}
+
+/** Liste "type[index]" des instances désactivées (disable: true), tous modules confondus, dans l'ordre du profil. */
+function listDisabledInstances(profile: Config): string[] {
+  return [
+    ...profile.gdocs.flatMap((instance, i) => (instance.disable ? [`gdocs[${i}]`] : [])),
+    ...profile.pdf.flatMap((instance, i) => (instance.disable ? [`pdf[${i}]`] : [])),
+    ...profile.mail.flatMap((instance, i) => (instance.disable ? [`mail[${i}]`] : [])),
+  ];
 }
 
 /** Exécute les 3 phases pour une ligne. Retourne false si une erreur a interrompu la ligne (et le script). */
@@ -191,26 +219,33 @@ export async function processRow(
   deps: PipelineDeps,
   nextRowNumber: number | undefined,
 ): Promise<boolean> {
-  await purgeRowOutputs(deps.drive, deps.sheetsWriter, row);
+  if (!deps.quiet) console.log(`Ligne ${row.rowNumber} : démarrage.`);
+  await purgeRowOutputs(deps.drive, deps.sheetsWriter, row, deps.quiet);
 
   const context: RowContext = { rowNumber: row.rowNumber, rawData: row.rawData, outputs: {} };
   let currentModuleName = '';
 
   try {
     for (const [index, instanceConfig] of profile.gdocs.entries()) {
+      if (instanceConfig.disable) continue;
       currentModuleName = `gdocs[${index}]`;
-      if (deps.verbose) console.log(`Ligne ${row.rowNumber} : ${currentModuleName}...`);
-      await runGdocsInstance(currentModuleName, instanceConfig, context, deps);
+      await loggedStep(deps.quiet, `Ligne ${row.rowNumber} : ${currentModuleName}`, () =>
+        runGdocsInstance(currentModuleName, instanceConfig, context, deps),
+      );
     }
     for (const [index, instanceConfig] of profile.pdf.entries()) {
+      if (instanceConfig.disable) continue;
       currentModuleName = `pdf[${index}]`;
-      if (deps.verbose) console.log(`Ligne ${row.rowNumber} : ${currentModuleName}...`);
-      await runPdfInstance(currentModuleName, instanceConfig, context, deps);
+      await loggedStep(deps.quiet, `Ligne ${row.rowNumber} : ${currentModuleName}`, () =>
+        runPdfInstance(currentModuleName, instanceConfig, context, deps),
+      );
     }
     for (const [index, instanceConfig] of profile.mail.entries()) {
+      if (instanceConfig.disable) continue;
       currentModuleName = `mail[${index}]`;
-      if (deps.verbose) console.log(`Ligne ${row.rowNumber} : ${currentModuleName}...`);
-      await runMailInstance(currentModuleName, instanceConfig, context, deps);
+      await loggedStep(deps.quiet, `Ligne ${row.rowNumber} : ${currentModuleName}`, () =>
+        runMailInstance(currentModuleName, instanceConfig, context, deps),
+      );
     }
   } catch (err) {
     context.error =
@@ -228,7 +263,12 @@ export async function processRow(
 }
 
 export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<number> {
-  const auth = await authenticate();
+  const disabledInstances = listDisabledInstances(profile);
+  if (disabledInstances.length > 0) {
+    console.log(`Module(s) désactivé(s) : ${disabledInstances.join(', ')}.`);
+  }
+
+  const auth = await authenticate(cliFlags.quiet);
   const sheets = google.sheets({ version: 'v4', auth });
   const drive = google.drive({ version: 'v3', auth });
   const docs = google.docs({ version: 'v1', auth });
@@ -240,6 +280,7 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
     profile.sheetTabName,
     cliFlags.dryRun,
     cliFlags.initColumns,
+    cliFlags.quiet,
   );
 
   if (cliFlags.validate) {
@@ -253,8 +294,8 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
     return 0;
   }
 
-  const rows = await readSheetRows(sheets, profile.sheetId, profile.sheetTabName);
-  const hiddenRowNumbers = await readHiddenRowNumbers(sheets, profile.sheetId, profile.sheetTabName);
+  const rows = await readSheetRows(sheets, profile.sheetId, profile.sheetTabName, cliFlags.quiet);
+  const hiddenRowNumbers = await readHiddenRowNumbers(sheets, profile.sheetId, profile.sheetTabName, cliFlags.quiet);
   const eligibleRows = determineEligibleRows(rows, hiddenRowNumbers, cliFlags);
 
   if (cliFlags.list) {
@@ -284,7 +325,7 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
     defaultDateFormat: profile.defaultDateFormat,
     autoCreateFolders: profile.autoCreateFolders,
     dryRun: cliFlags.dryRun,
-    verbose: cliFlags.verbose,
+    quiet: cliFlags.quiet,
   };
 
   await sheetsWriter.markInitialRow(eligibleRows[0].rowNumber);

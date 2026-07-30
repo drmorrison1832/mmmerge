@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { URL } from 'node:url';
 import { google, type Auth } from 'googleapis';
+import { loggedStep } from './pipeline/log.js';
 
 const CREDENTIALS_PATH = join(process.cwd(), 'credentials.json');
 const TOKEN_PATH = join(process.cwd(), 'token.json');
@@ -117,7 +118,7 @@ async function runInteractiveFlow(oAuth2Client: Auth.OAuth2Client): Promise<void
   persistToken(tokens);
 }
 
-export async function authenticate(): Promise<Auth.OAuth2Client> {
+export async function authenticate(quiet: boolean): Promise<Auth.OAuth2Client> {
   const { client_id, client_secret } = readClientCredentials();
   const oAuth2Client = new google.auth.OAuth2(client_id, client_secret);
 
@@ -130,7 +131,7 @@ export async function authenticate(): Promise<Auth.OAuth2Client> {
   if (storedToken) {
     oAuth2Client.setCredentials(storedToken);
     try {
-      await oAuth2Client.getAccessToken();
+      await loggedStep(quiet, 'Authentification : vérification du jeton stocké', () => oAuth2Client.getAccessToken());
       return oAuth2Client;
     } catch {
       console.warn('Jeton stocké invalide ou expiré (statut "Testing" : 7 jours) — reconnexion manuelle requise.');
