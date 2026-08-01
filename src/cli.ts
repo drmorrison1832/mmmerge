@@ -10,7 +10,7 @@ import { parseLines, HELP_TEMPLATES } from './cliFlags.js';
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const args = mri(argv, {
-    boolean: ['dry-run', 'force', 'validate', 'quiet', 'init-columns', 'list', 'help-templates'],
+    boolean: ['dry-run', 'force', 'validate', 'quiet', 'verbose', 'init-columns', 'list', 'help-templates'],
   });
 
   if (args['help-templates']) {
@@ -30,6 +30,7 @@ async function main(): Promise<void> {
     dryRun: Boolean(args['dry-run']),
     force: Boolean(args.force),
     quiet: Boolean(args.quiet),
+    verbose: Boolean(args.verbose),
     validate: Boolean(args.validate),
     initColumns: Boolean(args['init-columns']),
     list: Boolean(args.list),

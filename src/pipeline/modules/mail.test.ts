@@ -105,6 +105,7 @@ describe('runMailInstance', () => {
     });
 
     expect(context.outputs['mail[0]']).toEqual({
+      to: 'marie@example.com',
       subject: 'Votre contrat',
       url: 'https://mail.google.com/mail/u/0/#drafts?compose=draft-message-id',
       draftOnly: true,
@@ -277,6 +278,7 @@ describe('runMailInstance', () => {
     expect(draftsCreate).not.toHaveBeenCalled();
     expect(list).not.toHaveBeenCalled();
     expect(mailOutputOf(context, 'mail[0]')).toEqual({
+      to: 'marie@example.com',
       subject: 'Votre contrat',
       url: '(dry-run)',
       draftOnly: true,

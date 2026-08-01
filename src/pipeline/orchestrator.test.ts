@@ -44,6 +44,7 @@ function baseCliFlags(overrides: Partial<CliFlags> = {}): CliFlags {
     dryRun: false,
     force: false,
     quiet: true,
+    verbose: false,
     validate: false,
     initColumns: false,
     list: false,
@@ -260,7 +261,7 @@ describe('processRow', () => {
     const { deps, closeRow } = createDeps();
     const row = makeRow();
 
-    const success = await processRow(row, baseProfile(), deps, 6);
+    const { success } = await processRow(row, baseProfile(), deps, 6);
 
     expect(success).toBe(true);
     expect(closeRow).toHaveBeenCalledOnce();
@@ -274,7 +275,7 @@ describe('processRow', () => {
     const { deps, closeRow } = createDeps();
     (deps.drive.files.copy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('template introuvable'));
 
-    const success = await processRow(makeRow(), baseProfile(), deps, undefined);
+    const { success } = await processRow(makeRow(), baseProfile(), deps, undefined);
 
     expect(success).toBe(false);
     expect(closeRow).toHaveBeenCalledOnce();
@@ -302,7 +303,7 @@ describe('processRow', () => {
       ],
     });
 
-    const success = await processRow(makeRow(), profile, deps, undefined);
+    const { success } = await processRow(makeRow(), profile, deps, undefined);
 
     expect(success).toBe(true);
     expect(deps.drive.files.copy).toHaveBeenCalledTimes(1);
@@ -363,6 +364,13 @@ describe('runPipeline (intégration)', () => {
     const batchUpdate = vi.fn(async () => ({ data: {} }));
     const docs = { documents: { get, batchUpdate } } as unknown as docs_v1.Docs;
     return { docs, get, batchUpdate };
+  }
+
+  function createMockGmail() {
+    let nextId = 1;
+    const draftsCreate = vi.fn(async () => ({ data: { id: `draft-${nextId}`, message: { id: `draft-msg-${nextId++}` } } }));
+    const gmail = { users: { drafts: { create: draftsCreate } } } as unknown as import('googleapis').gmail_v1.Gmail;
+    return { gmail, draftsCreate };
   }
 
   beforeEach(() => {
@@ -443,6 +451,71 @@ describe('runPipeline (intégration)', () => {
     const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
     expect(logged).toContain('Lignes traitées avec succès : 2');
     expect(logged).toContain('Documents gDocs générés : 2');
+    logSpy.mockRestore();
+  });
+
+  it('--verbose : affiche le détail ligne par ligne des documents générés, groupé par instance', async () => {
+    const { sheets } = createMockSheetsClient([
+      ['Dupont', '', '', ''],
+      ['Martin', '', '', ''],
+    ]);
+    const { drive } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const profile = baseProfile({
+      gdocs: [
+        { disable: false, name: 'Contrat CDDU', template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' },
+      ],
+    });
+
+    await runPipeline(profile, baseCliFlags({ verbose: true }));
+
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('Documents générés :');
+    expect(logged).toContain('gdocs[0] - "Contrat CDDU"');
+    expect(logged).toContain('ligne 2 : Doc Dupont : https://docs.google.com/document/d/doc-1/edit');
+    expect(logged).toContain('ligne 3 : Doc Martin : https://docs.google.com/document/d/doc-2/edit');
+    logSpy.mockRestore();
+  });
+
+  it('--verbose : formate une ligne mail avec destinataire - sujet - URL', async () => {
+    const { sheets } = createMockSheetsClient([['Dupont', '', '', '']]);
+    const { drive } = createMockDrive();
+    const { gmail } = createMockGmail();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    mockState.gmailClient = gmail;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const profile = baseProfile({
+      gdocs: [],
+      mail: [{ disable: false, to: '{{Nom}}', cc: [], subject: 'Sujet {{Nom}}', template_html: '<p>x</p>', draft_only: true, attach: 'none', generated: [], external: [] }],
+    });
+
+    await runPipeline(profile, baseCliFlags({ verbose: true }));
+
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('mail[0]');
+    expect(logged).toContain('ligne 2 : Dupont - Sujet Dupont - https://mail.google.com/mail/u/0/#drafts?compose=draft-msg-1');
+    logSpy.mockRestore();
+  });
+
+  it("sans --verbose, n'affiche pas le détail ligne par ligne", async () => {
+    const { sheets } = createMockSheetsClient([['Dupont', '', '', '']]);
+    const { drive } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runPipeline(baseProfile(), baseCliFlags());
+
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).not.toContain('Documents générés :');
     logSpy.mockRestore();
   });
 

@@ -16,6 +16,7 @@ export type FileOutput = {
  * fragile — voir architecture.md §3) d'un mail réellement envoyé (`url` stable).
  */
 export type MailOutput = {
+  to: string;
   subject: string;
   url: string;
   draftOnly: boolean;

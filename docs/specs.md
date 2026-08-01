@@ -1,7 +1,9 @@
 # Spécifications Techniques & Fonctionnelles : "MMMerge"
 
-> **Dernière mise à jour :** 2026-07-31 — v16
-> **Résumé des derniers changements :** Nouveau champ `template_link` (§3, `gdocs`/`pdf` uniquement) : chaîne libre purement informative (typiquement l'URL du template), jamais lue par l'application — un aide-mémoire pour l'utilisateur. Correction d'une régression sur l'affichage des erreurs fatales : la trace de pile technique s'affichait par défaut au lieu d'un message clair (introduit par erreur lors du remplacement de `--verbose` par `--quiet` en v13), pouvant faire passer une simple erreur de saisie (ex: `--lines=1`, qui cible la ligne d'en-tête) pour un crash. Toujours `Erreur : <message>` désormais, quel que soit `--quiet`. Voir architecture.md v18 pour le détail technique.
+> **Dernière mise à jour :** 2026-08-01 — v17
+> **Résumé des derniers changements :** `--verbose` réintroduit (§5), avec un rôle entièrement différent de son ancien sens (v13, où il gouvernait le logging de progression — rôle repris par le fait que ce logging est désormais actif par défaut) : affiche en fin d'exécution le détail ligne par ligne de chaque document/email généré, groupé par instance. Indépendant de `--quiet`. `mmm_outputs.mail[i]` (§1) gagne un champ `to` (destinataire résolu), nécessaire pour ce détail. Voir architecture.md v19 pour le détail technique.
+>
+> **Résumé v16 (2026-07-31) :** Nouveau champ `template_link` (§3, `gdocs`/`pdf` uniquement) : chaîne libre purement informative (typiquement l'URL du template), jamais lue par l'application — un aide-mémoire pour l'utilisateur. Correction d'une régression sur l'affichage des erreurs fatales : la trace de pile technique s'affichait par défaut au lieu d'un message clair (introduit par erreur lors du remplacement de `--verbose` par `--quiet` en v13), pouvant faire passer une simple erreur de saisie (ex: `--lines=1`, qui cible la ligne d'en-tête) pour un crash. Toujours `Erreur : <message>` désormais, quel que soit `--quiet`. Voir architecture.md v18 pour le détail technique.
 >
 > **Résumé v15 (2026-07-31) :** Deux corrections. (1) Module PDF (§3) : l'extension `.pdf` est désormais ajoutée automatiquement à `output_filename` si absente — un fichier créé sur Drive sans extension pouvait ne pas s'ouvrir correctement selon le client, et affectait aussi le nom de la pièce jointe d'un email qui joint ce PDF. (2) Nouveau modificateur `nospace` (§3), types `number`/`euro` : retire le séparateur de milliers du résultat, pour les cas où la valeur est destinée à être copiée-collée dans un champ qui rejette tout espace. Voir architecture.md v17 pour le détail technique des deux.
 >
@@ -44,6 +46,7 @@ Les colonnes de données libres servent de balises (ex: une colonne `Nom` rempla
   "gdocs[0]": { "filename": "CDDU Marie Dupont", "url": "https://docs.google.com/document/d/abc123/edit", "createdAt": "2026-07-05T14:32:10Z" },
   "pdf[0]": { "filename": "CDDU Marie Dupont", "url": "https://drive.google.com/file/d/def456/view", "createdAt": "2026-07-05T14:32:14Z" },
   "mail[0]": {
+    "to": "marie.dupont@example.com",
     "subject": "Votre contrat de juillet",
     "url": "https://mail.google.com/mail/u/0/#drafts?compose=ghi789",
     "draftOnly": true,
@@ -53,7 +56,7 @@ Les colonnes de données libres servent de balises (ex: une colonne `Nom` rempla
 }
 ```
 
-**Note sur l'exemple `mail[0]`** : `draftOnly` reflète directement la valeur de `draft_only` de l'instance — permet de savoir comment interpréter `url` sans avoir à consulter le profil. Pour un brouillon (`draft_only: true`), l'URL suit le format `#drafts?compose=<id>` — **vérifiée en conditions réelles**, mais **fragile** : elle cesse de fonctionner si le brouillon est ensuite modifié ou restauré depuis la corbeille (l'ancien format `#drafts/<id>` ne fonctionne plus du tout dans l'UI Gmail actuelle). Cette fragilité est une limite de la plateforme Gmail, pas un bug MMMerge — le lien reste la meilleure option disponible juste après la génération. Pour un mail réellement envoyé (`draft_only: false`), l'URL `#sent/<id>` est stable — **vérifiée en conditions réelles**.
+**Note sur l'exemple `mail[0]`** : `to` est le destinataire déjà résolu (balises substituées) pour cette ligne — utilisé notamment par `--verbose` (§5) pour afficher le détail des emails composés sans avoir à re-résoudre `to` depuis le profil. `draftOnly` reflète directement la valeur de `draft_only` de l'instance — permet de savoir comment interpréter `url` sans avoir à consulter le profil. Pour un brouillon (`draft_only: true`), l'URL suit le format `#drafts?compose=<id>` — **vérifiée en conditions réelles**, mais **fragile** : elle cesse de fonctionner si le brouillon est ensuite modifié ou restauré depuis la corbeille (l'ancien format `#drafts/<id>` ne fonctionne plus du tout dans l'UI Gmail actuelle). Cette fragilité est une limite de la plateforme Gmail, pas un bug MMMerge — le lien reste la meilleure option disponible juste après la génération. Pour un mail réellement envoyé (`draft_only: false`), l'URL `#sent/<id>` est stable — **vérifiée en conditions réelles**.
 
 **Colonnes système absentes du Sheet** : par défaut, une `Erreur` explicite liste toutes les colonnes `mmm_*` manquantes d'un coup. Le flag `--init-columns` (§5) permet de les créer automatiquement (ajoutées en fin d'en-tête) plutôt que d'échouer — pas de création automatique par défaut, pour ne pas masquer silencieusement une vraie erreur de configuration (mauvais `sheetTabName`/`sheetId`).
 
@@ -232,6 +235,7 @@ Syntaxe générale : `--[clé]` ou `--[clé]=[valeur]`, réservée aux **paramè
 - `--init-columns` : Crée automatiquement les colonnes système `mmm_status`/`mmm_outputs`/`mmm_last_run` si elles sont absentes de l'en-tête du Sheet (ajoutées en fin de ligne 1), au lieu de lever une `Erreur`. Sans ce flag, des colonnes manquantes sont toujours une `Erreur` explicite (les listant toutes) — pas de création automatique par défaut.
 - `--list` : Affiche les lignes éligibles (numéro de ligne + `mmm_status` actuel) sans exécuter le pipeline — combine les mêmes filtres que l'exécution réelle (`--lines`, `--force`, lignes masquées).
 - `--quiet` : Supprime le logging de progression en temps réel (actif par défaut — voir ci-dessous). Aucun effet sur le comportement.
+- `--verbose` : Affiche, en plus du résumé numérique, le détail ligne par ligne de chaque document/email généré, groupé par instance (voir "Détail --verbose" ci-dessous). Indépendant de `--quiet` — les deux flags concernent des affichages distincts et sans rapport (progression en cours d'exécution vs récapitulatif final), et peuvent être combinés.
 - `--help-templates` : Affiche la syntaxe des balises et modificateurs (voir §3) et quitte immédiatement — utilisable sans nom de profil.
 
 ### Logging de progression en temps réel
@@ -241,6 +245,27 @@ Par défaut, chaque action impliquant un appel réseau (authentification, lectur
 ### Résumé de fin d'exécution
 
 Hors `--validate`/`--list`, chaque exécution (y compris `--dry-run`) affiche un résumé : nombre de lignes traitées avec succès, nombre de documents gDocs/PDF générés et d'emails composés (calculés à partir du nombre d'instances **actives** configurées × lignes traitées — une instance `disable: true` n'entre pas dans ce calcul), et le numéro de la ligne en cause si le script s'est arrêté sur une `Erreur`.
+
+### Détail `--verbose`
+
+En plus du résumé numérique, `--verbose` affiche chaque document/email effectivement généré durant l'exécution, groupé par instance dans l'ordre du profil (`gdocs[]` puis `pdf[]` puis `mail[]`), avec une ligne par ligne du Sheet traitée. Exemple :
+
+```
+Documents générés :
+
+gdocs[0] - "Contrat CDDU"
+  ligne 5 : CDDU Dupont Étienne.pdf : https://docs.google.com/document/d/.../edit
+  ligne 8 : CDDU Martin Paul.pdf : https://docs.google.com/document/d/.../edit
+
+mail[0]
+  ligne 5 : dupont@example.com - Votre contrat CDDU - https://mail.google.com/mail/u/0/#drafts?compose=...
+```
+
+- Le titre après le tiret (`- "Contrat CDDU"`) est la clé `name` de l'instance (specs.md §3), omis si l'instance n'en a pas.
+- Le numéro de ligne est celui du Sheet (numérotation visuelle), pas un simple compteur — permet de retrouver la ligne exacte sans repasser par `--list`.
+- Pour `gdocs[]`/`pdf[]` : `<filename> : <url>` (repris de `mmm_outputs`). Pour `mail[]` : `<destinataire résolu> - <sujet résolu> - <url>`.
+- Une instance désactivée, ou qui n'a produit aucune sortie sur aucune ligne traitée (ex: toutes les lignes ont échoué avant de l'atteindre), n'apparaît pas du tout dans la liste.
+- Si une ligne échoue en cours de route, les instances déjà exécutées avec succès sur cette même ligne apparaissent quand même dans le détail — seule l'instance en échec (et celles qui suivent) en sont absentes pour cette ligne.
 
 ### Notification des modules désactivés
 

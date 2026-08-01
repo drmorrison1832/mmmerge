@@ -136,6 +136,7 @@ export async function runMailInstance(
   if (deps.dryRun) {
     console.log(`[dry-run] ${moduleName} : ${config.draft_only ? 'créerait un brouillon' : 'enverrait un mail'} à "${to}", sujet "${subject}".`);
     const output: MailOutput = {
+      to,
       subject,
       url: '(dry-run)',
       draftOnly: config.draft_only,
@@ -176,6 +177,7 @@ export async function runMailInstance(
       deps.gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw } } }),
     );
     output = {
+      to,
       subject,
       url: `https://mail.google.com/mail/u/0/#drafts?compose=${data.message?.id}`,
       draftOnly: true,
@@ -187,6 +189,7 @@ export async function runMailInstance(
       deps.gmail.users.messages.send({ userId: 'me', requestBody: { raw } }),
     );
     output = {
+      to,
       subject,
       url: `https://mail.google.com/mail/u/0/#sent/${data.id}`,
       draftOnly: false,

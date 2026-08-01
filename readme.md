@@ -269,11 +269,34 @@ node dist/cli.js <profil> [options]
 | `--init-columns` | Crée les colonnes système `mmm_*` manquantes au lieu d'échouer. |
 | `--list` | Affiche les lignes éligibles (numéro + statut actuel) sans exécuter le pipeline — pour vérifier avant un lancement réel. |
 | `--quiet` | Supprime le logging de progression en temps réel (actif par défaut) — aucun effet sur le comportement. |
+| `--verbose` | Affiche en fin d'exécution le détail ligne par ligne de chaque document/email généré, groupé par instance (voir exemple ci-dessous). Indépendant de `--quiet`, qui ne concerne que le logging de progression. |
 | `--help-templates` | Affiche la syntaxe des balises (voir section précédente) et quitte — utilisable sans profil. |
 
 Par défaut, chaque appel réseau (Sheets/Drive/Docs/Gmail) est annoncé en console avant d'être lancé, puis confirmé (`: OK`) une fois terminé — utile pour savoir précisément où en est une exécution longue, ou ce qui est en cours si le script semble bloqué. `--quiet` revient à un affichage minimal (avertissements, résumé final, ligne en cause en cas d'erreur).
 
 Code de sortie `0` (succès, ou aucune ligne à traiter) ou `1` (erreur — le statut est toujours écrit sur le Sheet avant l'arrêt). En fin d'exécution (hors `--validate`/`--list`), un résumé est affiché : lignes traitées, documents/PDF générés, emails composés, et la ligne en cause en cas d'arrêt sur erreur.
+
+### `--verbose` : détail des documents générés
+
+En plus du résumé numérique, `--verbose` affiche chaque document/email réellement généré, groupé par instance (dans l'ordre du profil), avec son titre (`name`, si configuré), puis une ligne par ligne de Sheet traitée (numéro de ligne réel, pas un simple compteur) :
+
+```
+Documents générés :
+
+gdocs[0] - "Contrat CDDU"
+  ligne 5 : CDDU Dupont Étienne.pdf : https://docs.google.com/document/d/.../edit
+  ligne 8 : CDDU Martin Paul.pdf : https://docs.google.com/document/d/.../edit
+
+pdf[0] - "Contrat CDDU (PDF)"
+  ligne 5 : CDDU Dupont Étienne.pdf : https://drive.google.com/file/d/.../view
+  ligne 8 : CDDU Martin Paul.pdf : https://drive.google.com/file/d/.../view
+
+mail[0]
+  ligne 5 : dupont@example.com - Votre contrat CDDU - https://mail.google.com/mail/u/0/#drafts?compose=...
+  ligne 8 : martin@example.com - Votre contrat CDDU - https://mail.google.com/mail/u/0/#drafts?compose=...
+```
+
+Une instance sans `name` configuré n'affiche que son identifiant (`mail[0]`, sans le `- "..."`). Une instance désactivée (`disable`), ou qui n'a généré aucune sortie (toutes ses lignes en erreur avant qu'elle ne s'exécute), n'apparaît pas du tout.
 
 ### Exemples de commandes
 

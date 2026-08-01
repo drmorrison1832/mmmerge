@@ -9,7 +9,7 @@ import type { Config } from '../config/schema.js';
 import { runGdocsInstance } from './modules/gdocs.js';
 import { runPdfInstance } from './modules/pdf.js';
 import { runMailInstance } from './modules/mail.js';
-import { ModuleError, type RowContext } from './rowContext.js';
+import { ModuleError, type RowContext, type FileOutput, type MailOutput } from './rowContext.js';
 import type { PipelineDeps } from './deps.js';
 import { loggedStep } from './log.js';
 
@@ -17,6 +17,8 @@ export type CliFlags = {
   dryRun: boolean;
   force: boolean;
   quiet: boolean;
+  /** Affiche en fin d'exécution le détail (ligne par ligne) de chaque document/email généré. */
+  verbose: boolean;
   validate: boolean;
   /** Crée les colonnes système mmm_* manquantes au lieu de lever une erreur. */
   initColumns: boolean;
@@ -25,6 +27,9 @@ export type CliFlags = {
   /** Numéros de ligne (numérotation visuelle Sheets, ligne 1 = en-tête) demandés via --lines. */
   lines?: number[];
 };
+
+/** Clé = identifiant technique d'instance ('gdocs[0]', 'pdf[1]', 'mail[0]', ...), dans l'ordre où les lignes ont été traitées. */
+export type ModuleReport = Map<string, Array<{ rowNumber: number; output: FileOutput | MailOutput }>>;
 
 export type SheetRow = {
   rowNumber: number;
@@ -203,6 +208,45 @@ function printSummary(processedRows: number, profile: Config, failure?: { rowNum
   if (failure) console.log(`  Erreur sur la ligne ${failure.rowNumber} — script interrompu.`);
 }
 
+/** Ajoute les sorties d'une ligne (une par instance non désactivée exécutée) au rapport accumulé sur toute l'exécution. */
+function recordOutputs(report: ModuleReport, rowNumber: number, outputs: RowContext['outputs']): void {
+  for (const [moduleName, output] of Object.entries(outputs)) {
+    const entries = report.get(moduleName) ?? [];
+    entries.push({ rowNumber, output });
+    report.set(moduleName, entries);
+  }
+}
+
+function isMailOutput(output: FileOutput | MailOutput): output is MailOutput {
+  return 'to' in output;
+}
+
+/** --verbose : détail ligne par ligne de chaque document/email généré, groupé par instance, dans l'ordre du profil. */
+function printVerboseManifest(report: ModuleReport, profile: Config): void {
+  const sections: Array<{ ref: string; name?: string }> = [
+    ...profile.gdocs.map((instance, i) => ({ ref: `gdocs[${i}]`, name: instance.name })),
+    ...profile.pdf.map((instance, i) => ({ ref: `pdf[${i}]`, name: instance.name })),
+    ...profile.mail.map((instance, i) => ({ ref: `mail[${i}]`, name: instance.name })),
+  ];
+
+  const nonEmptySections = sections.filter(({ ref }) => (report.get(ref)?.length ?? 0) > 0);
+  if (nonEmptySections.length === 0) return;
+
+  console.log('');
+  console.log('Documents générés :');
+  for (const { ref, name } of nonEmptySections) {
+    console.log('');
+    console.log(name ? `${ref} - "${name}"` : ref);
+    for (const { rowNumber, output } of report.get(ref)!) {
+      if (isMailOutput(output)) {
+        console.log(`  ligne ${rowNumber} : ${output.to} - ${output.subject} - ${output.url}`);
+      } else {
+        console.log(`  ligne ${rowNumber} : ${output.filename} : ${output.url}`);
+      }
+    }
+  }
+}
+
 /** Liste "type[index]" des instances désactivées (disable: true), tous modules confondus, dans l'ordre du profil. */
 function listDisabledInstances(profile: Config): string[] {
   return [
@@ -212,13 +256,16 @@ function listDisabledInstances(profile: Config): string[] {
   ];
 }
 
-/** Exécute les 3 phases pour une ligne. Retourne false si une erreur a interrompu la ligne (et le script). */
+/**
+ * Exécute les 3 phases pour une ligne. `success: false` si une erreur a interrompu la ligne (et le script) —
+ * `outputs` contient malgré tout les instances qui ont réussi avant l'interruption.
+ */
 export async function processRow(
   row: SheetRow,
   profile: Config,
   deps: PipelineDeps,
   nextRowNumber: number | undefined,
-): Promise<boolean> {
+): Promise<{ success: boolean; outputs: RowContext['outputs'] }> {
   if (!deps.quiet) console.log(`Ligne ${row.rowNumber} : démarrage.`);
   await purgeRowOutputs(deps.drive, deps.sheetsWriter, row, deps.quiet);
 
@@ -254,12 +301,12 @@ export async function processRow(
         : { module: currentModuleName, message: (err as Error).message };
     await deps.sheetsWriter.closeRow(context, profile);
     console.error(`Ligne ${row.rowNumber} : Erreur - ${context.error.module} - ${context.error.message}`);
-    return false;
+    return { success: false, outputs: context.outputs };
   }
 
   await deps.sheetsWriter.closeRow(context, profile, nextRowNumber);
   console.log(`Ligne ${row.rowNumber} : Succès.`);
-  return true;
+  return { success: true, outputs: context.outputs };
 }
 
 export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<number> {
@@ -330,18 +377,22 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
 
   await sheetsWriter.markInitialRow(eligibleRows[0].rowNumber);
 
+  const report: ModuleReport = new Map();
   let processedRows = 0;
   for (let i = 0; i < eligibleRows.length; i++) {
     const row = eligibleRows[i];
     const nextRow = eligibleRows[i + 1];
-    const success = await processRow(row, profile, deps, nextRow?.rowNumber);
-    if (!success) {
+    const result = await processRow(row, profile, deps, nextRow?.rowNumber);
+    recordOutputs(report, row.rowNumber, result.outputs);
+    if (!result.success) {
       printSummary(processedRows, profile, { rowNumber: row.rowNumber });
+      if (cliFlags.verbose) printVerboseManifest(report, profile);
       return 1;
     }
     processedRows++;
   }
 
   printSummary(processedRows, profile);
+  if (cliFlags.verbose) printVerboseManifest(report, profile);
   return 0;
 }
