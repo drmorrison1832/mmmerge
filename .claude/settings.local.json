@@ -8,7 +8,9 @@
       "Bash(git commit -m ' *)",
       "Bash(npx vitest *)",
       "Bash(node --input-type=module -e ' *)",
-      "Bash(grep -n \"^| \\\\`--quiet\\\\`\\\\|^| \\\\`--help-templates\\\\`\\\\|Par défaut, chaque appel réseau\" readme.md)"
+      "Bash(grep -n \"^| \\\\`--quiet\\\\`\\\\|^| \\\\`--help-templates\\\\`\\\\|Par défaut, chaque appel réseau\" readme.md)",
+      "Bash(git push *)",
+      "Bash(node -e ' *)"
     ]
   }
 }

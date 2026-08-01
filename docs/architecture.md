@@ -1,7 +1,9 @@
 # Architecture Technique : "MMMerge"
 
-> **Dernière mise à jour :** 2026-08-01 — v19
-> **Résumé des derniers changements :** `--verbose` réintroduit (§3 étape 9, §5), sans rapport avec son ancien rôle (v13 — désormais assuré par le logging de progression actif par défaut) : détail ligne par ligne des documents/emails générés, groupé par instance. `rowContext.ts` : `MailOutput` gagne `to: string` (destinataire résolu), écrit dans les trois branches de `runMailInstance` (dry-run, brouillon, envoi) — nécessaire pour afficher ce détail côté mail sans re-résoudre `config.to`. `orchestrator.ts` : `processRow` retourne désormais `{ success, outputs }` au lieu d'un booléen (`outputs` = `RowContext.outputs` de la ligne, même partiel en cas d'échec) ; nouveau type `ModuleReport` (`Map<string, Array<{ rowNumber, output }>>`) accumulé ligne par ligne dans `runPipeline` via la nouvelle fonction `recordOutputs` ; nouvelle fonction `printVerboseManifest` (avec sa garde de type `isMailOutput`, basée sur la présence de `to`) affichée après `printSummary`, réussite ou échec. `CliFlags.verbose` (nouveau, indépendant de `quiet`) n'est pas propagé à `PipelineDeps` : il n'est nécessaire qu'une fois, en toute fin de `runPipeline`, jamais à l'intérieur des modules.
+> **Dernière mise à jour :** 2026-08-01 — v20
+> **Résumé des derniers changements :** Deux améliorations de confort en attente depuis plusieurs sessions. (1) Nouveau module `paths.ts` : `PROJECT_ROOT`, résolu depuis `import.meta.url` (via `fileURLToPath`, indispensable car le chemin du projet contient un espace — voir le commentaire du fichier) plutôt que `process.cwd()`. `loader.ts` (`configs/`) et `auth.ts` (`credentials.json`/`token.json`) l'utilisent désormais — `mmmerge` fonctionne depuis n'importe quel dossier une fois lié via `npm link`, vérifié en conditions réelles (lancé depuis `/tmp`). `paths.ts` doit rester à la racine de `src/` (comme il compile à la racine de `dist/`) pour que "un niveau au-dessus" pointe correctement vers la racine du projet, que le module soit exécuté compilé (`dist/paths.js`) ou directement (`src/paths.ts`, sous vitest). (2) `loggedStep` (`pipeline/log.ts`) : la confirmation de succès devient une ligne compacte `→ OK` plutôt que la répétition complète de `"<message> : OK"` — une vingtaine d'appels par exécution rendait la répétition redondante. Nouveau fichier de test `pipeline/log.test.ts` (n'existait pas jusqu'ici).
+>
+> **Résumé v19 (2026-08-01) :** `--verbose` réintroduit (§3 étape 9, §5), sans rapport avec son ancien rôle (v13 — désormais assuré par le logging de progression actif par défaut) : détail ligne par ligne des documents/emails générés, groupé par instance. `rowContext.ts` : `MailOutput` gagne `to: string` (destinataire résolu), écrit dans les trois branches de `runMailInstance` (dry-run, brouillon, envoi) — nécessaire pour afficher ce détail côté mail sans re-résoudre `config.to`. `orchestrator.ts` : `processRow` retourne désormais `{ success, outputs }` au lieu d'un booléen (`outputs` = `RowContext.outputs` de la ligne, même partiel en cas d'échec) ; nouveau type `ModuleReport` (`Map<string, Array<{ rowNumber, output }>>`) accumulé ligne par ligne dans `runPipeline` via la nouvelle fonction `recordOutputs` ; nouvelle fonction `printVerboseManifest` (avec sa garde de type `isMailOutput`, basée sur la présence de `to`) affichée après `printSummary`, réussite ou échec. `CliFlags.verbose` (nouveau, indépendant de `quiet`) n'est pas propagé à `PipelineDeps` : il n'est nécessaire qu'une fois, en toute fin de `runPipeline`, jamais à l'intérieur des modules.
 >
 > **Résumé v18 (2026-07-31) :** Trois changements. (1) Nouveau champ `template_link` (`FileModuleFieldsSchema`, donc `gdocs`/`pdf` uniquement) : `z.string().optional()`, purement décoratif — aucune logique associée nulle part, jamais lu, jamais validé. (2) `cli.ts` : correction d'une régression sur l'affichage des erreurs fatales non interceptées — voir §8 pour le détail complet (la trace de pile brute s'affichait par défaut au lieu du message seul, un renversement accidentel introduit en v13 lors du remplacement de `--verbose` par `--quiet`). Désormais toujours `Erreur : <message>`, indépendant de `--quiet`. (3) Documentation seulement : correction de plusieurs exemples déjà en place où l'espace attendu avant/dans un montant en euros ou un nombre à séparateur de milliers était un espace ASCII ordinaire au lieu du caractère réellement produit (U+00A0 avant `€`, U+202F pour le séparateur de milliers) — aucun changement de code, seulement de texte.
 >
@@ -77,6 +79,7 @@ mmmerge/
 ├── src/                       # code source TypeScript, jamais exécuté directement
 │   ├── cli.ts                 # point d'entrée : parsing mri, dispatch vers l'orchestrateur
 │   ├── auth.ts                # flux OAuth2, lecture/écriture de credentials.json et token.json
+│   ├── paths.ts               # PROJECT_ROOT (résolu depuis import.meta.url, pas process.cwd())
 │   ├── sheetsWriter.ts        # seul point d'écriture vers l'API Sheets (statuts, mmm_outputs, mmm_last_run)
 │   ├── utils.ts               # utilitaires partagés (ex: extractDriveFileId)
 │   ├── cliFlags.ts            # parsing de valeurs de flags nécessitant conversion (ex: --lines), séparé de cli.ts pour rester testable
@@ -116,7 +119,7 @@ mmmerge/
 
 ## 2. Authentification
 
-OAuth2 "Desktop app", scopes Sheets/Docs/Drive/Gmail, `credentials.json`/`token.json` locaux, refresh token à 7 jours (compte Gmail personnel, statut "Testing"), reconnexion manuelle acceptée.
+OAuth2 "Desktop app", scopes Sheets/Docs/Drive/Gmail, `credentials.json`/`token.json` locaux (résolus depuis `PROJECT_ROOT`, §1 — pas `process.cwd()`), refresh token à 7 jours (compte Gmail personnel, statut "Testing"), reconnexion manuelle acceptée.
 
 Le scope `drive` déjà présent couvre la modification des permissions de partage (`permissions.create`) — aucun scope supplémentaire requis pour `resolveShareSettings`.
 
@@ -306,49 +309,60 @@ Reconnu uniquement par `renderTemplateString`, pas par `resolveTemplateTags`. Vo
 ```ts
 async function resolveShareSettings(
   moduleName: string,
+  drive: drive_v3.Drive,
   fileId: string,
   shareConfig: { email?: { addresses: string[]; permission: 'reader'|'commenter'|'editor' }; link?: { permission: 'reader'|'commenter'|'editor' } },
   rawData: Record<string, string>,
+  defaultDateFormat: string,
+  rowNumber = 0,
+  quiet = true,
 ): Promise<void> {
+  const logPrefix = `Ligne ${rowNumber} : ${moduleName} : partage`;
+
   if (shareConfig.link) {
-    await drive.permissions.create({ fileId, requestBody: { type: 'anyone', role: driveRole(shareConfig.link.permission) } });
+    await loggedStep(quiet, `${logPrefix} — lien public`, () =>
+      drive.permissions.create({ fileId, requestBody: { type: 'anyone', role: driveRole(shareConfig.link.permission) } }));
   }
   if (shareConfig.email) {
     for (const addressTemplate of shareConfig.email.addresses) {
-      const address = renderTemplateString(moduleName, addressTemplate, rawData);
-      await drive.permissions.create({ fileId, requestBody: { type: 'user', emailAddress: address, role: driveRole(shareConfig.email.permission) } });
+      const address = renderTemplateString(moduleName, addressTemplate, rawData, {}, defaultDateFormat);
+      await loggedStep(quiet, `${logPrefix} — email "${address}"`, () =>
+        drive.permissions.create({ fileId, requestBody: { type: 'user', emailAddress: address, role: driveRole(shareConfig.email.permission) } }));
     }
   }
 }
 ```
+
+`rowNumber`/`quiet` défaut à `0`/`true` uniquement pour ne pas casser les sites d'appel des tests existants (voir remarque similaire, résumé v15) — l'appelant réel (`gdocs.ts`) passe toujours `context.rowNumber`/`deps.quiet` explicitement.
 
 `driveRole` traduit `reader`/`commenter`/`editor` vers les rôles Drive natifs : `reader`→`reader`, `commenter`→`commenter` (inchangés), `editor`→`writer` (seul le nom diffère). Échec en cours de boucle → permissions déjà accordées restent en place. Le fichier lui-même est déjà tracé dans `mmm_outputs` avant cet appel, donc un échec ici n'orpheline jamais le fichier.
 
 ### Résolution des pièces jointes par instance Mail
 
 ```ts
-async function resolveAttachmentsForInstance(
+async function resolveAttachments(
   moduleName: string,
-  mailInstanceConfig: MailInstanceConfig,
+  config: MailInstance,
   context: RowContext,
-): Promise<{ fileId: string; filename: string }[]> {
-  const fromGenerated = mailInstanceConfig.attach === 'all' || mailInstanceConfig.attach === 'generated'
-    ? mailInstanceConfig.generated.map((ref) => {
+  deps: PipelineDeps,
+): Promise<ResolvedAttachment[]> {
+  const fromGenerated = config.attach === 'all' || config.attach === 'generated'
+    ? config.generated.map((ref) => {
         const output = context.outputs[ref] as FileOutput | undefined;
-        if (!output) throw new ModuleError(moduleName, `Référence "${ref}" introuvable dans les sorties générées`);
-        return { fileId: extractDriveFileId(output.url), filename: output.filename };
+        if (!output) throw new ModuleError(moduleName, `Référence "${ref}" introuvable dans les sorties générées.`);
+        return { fileId: extractDriveFileId(output.url), filename: output.filename, mimeType: 'application/pdf' };
       })
     : [];
 
-  const fromExternal = mailInstanceConfig.attach === 'all' || mailInstanceConfig.attach === 'external'
-    ? await resolveExternalFiles(moduleName, mailInstanceConfig.external, mailInstanceConfig.externalFolder, context.rawData)
+  const fromExternal = config.attach === 'all' || config.attach === 'external'
+    ? await resolveExternalFiles(moduleName, deps, context, config.external, config.externalFolder!)
     : [];
 
   return [...fromGenerated, ...fromExternal];
 }
 ```
 
-`resolveExternalFiles` : résout `externalFolder` via `folderResolver.resolveFolderPath` (autoCreate forcé à `false`), résout chaque entrée de `external` via `renderTemplateString`, détecte les doublons de noms résolus, puis un `drive.files.list` par nom recherché (0 ou plusieurs résultats → `Erreur`).
+`resolveExternalFiles` : résout `externalFolder` via `folderResolver.resolveFolderPath` (autoCreate forcé à `false`), résout chaque entrée de `external` via `renderTemplateString`, détecte les doublons de noms résolus (`Erreur` immédiate si deux entrées se résolvent au même nom), puis un `drive.files.list` par nom recherché — enveloppé par `loggedStep` (le nom du fichier recherché est inclus dans le message pour rester non ambigu si plusieurs recherches se suivent). 0 résultat, plusieurs résultats, ou doublon résolu → `Erreur`. `ResolvedAttachment` (type interne à `mail.ts`) = `{ fileId, filename, mimeType }` — `mimeType` toujours `'application/pdf'` pour une pièce jointe `generated` (un PDF, par construction), déduit du fichier Drive lui-même pour une pièce jointe `external`.
 
 ### Composition du message (Gmail, `mimeMessage.ts`)
 
@@ -368,7 +382,7 @@ L'API Gmail n'offre pas de méthode haut niveau pour composer un message avec pi
 5. Écrit `En cours d'exécution` (+ `mmm_last_run`) sur la première ligne. Liste vide → sortie propre (code `0`).
 6. Pour chaque ligne : purge les sorties existantes, construit un `RowContext` (`outputs: {}`), annote chaque instance avec son identifiant technique, puis exécute dans l'ordre : instances `gdocs[]` (création → écriture incrémentale → `resolveShareSettings` si configuré), instances `pdf[]` (création → écriture incrémentale), instances `mail[]` (composition/envoi → écriture incrémentale) — une instance `disable: true` est sautée (`continue`) avant tout appel, **sans** consommer son tour dans l'exécution (mais son identifiant de position, lui, reste inchangé — §3, §6). Toute erreur interrompt la ligne et le script (§8). Succès complet → `SheetsWriter.closeRow` final, qui ouvre aussi la ligne suivante (`markInitialRow` fusionné dans le même appel) — "ligne suivante" désigne la prochaine ligne **éligible** de la liste déjà filtrée à l'étape 4, pas nécessairement `rowNumber + 1`. `processRow` retourne `{ success, outputs }` plutôt qu'un simple booléen — `outputs` (le `RowContext.outputs` de la ligne, y compris en cas d'échec en cours de route) alimente le rapport `--verbose` (étape 9), via `recordOutputs`, quelle que soit l'issue de la ligne.
 7. `--dry-run` : respecté individuellement par chaque module et `SheetsWriter`. Concrètement, chaque module (`gdocs`/`pdf`/`mail`) résout d'abord ses champs purs (nom de fichier, destinataires…, sans appel API), puis court-circuite avant tout appel Drive/Docs/Gmail réel si `dryRun` est actif, en écrivant une sortie synthétique (`url: '(dry-run)'`) via `SheetsWriter` — lui-même en écriture simulée (lectures réelles conservées).
-8. Logging de progression en temps réel (`loggedStep`, `pipeline/log.ts`) : actif par défaut, désactivable via `--quiet` (`deps.quiet`/`CliFlags.quiet`). Chaque appel réseau individuel (pas seulement les changements de ligne/instance) est enveloppé par `loggedStep`, qui logge `"<message>..."` juste avant l'appel puis `"<message> : OK"` une fois résolu avec succès — aucun `: OK` si l'appel échoue, ce qui situe déjà l'erreur avant même son message. `--quiet` ne change que cette verbosité de progression, jamais le comportement.
+8. Logging de progression en temps réel (`loggedStep`, `pipeline/log.ts`) : actif par défaut, désactivable via `--quiet` (`deps.quiet`/`CliFlags.quiet`). Chaque appel réseau individuel (pas seulement les changements de ligne/instance) est enveloppé par `loggedStep`, qui logge `"<message>..."` juste avant l'appel puis une ligne `"→ OK"` (volontairement compacte, ne répète pas le message — voir v20) une fois résolu avec succès — aucun `"→ OK"` si l'appel échoue, ce qui situe déjà l'erreur avant même son message. `--quiet` ne change que cette verbosité de progression, jamais le comportement.
 9. `--verbose` (`CliFlags.verbose`, indépendant de `--quiet`) : après `printSummary` (succès ou échec), `printVerboseManifest(report, profile)` affiche le détail ligne par ligne de chaque sortie accumulée dans `report` (`ModuleReport`, `Map<string, Array<{ rowNumber, output }>>`, construit au fil des lignes par `recordOutputs`). Groupé par instance dans l'ordre du profil (`gdocs[]` puis `pdf[]` puis `mail[]`), instance omise si aucune entrée dans `report` (désactivée, ou jamais atteinte). `isMailOutput` (garde de type sur la présence de `to`) distingue le format de ligne gDocs/PDF (`<filename> : <url>`) du format Mail (`<to> - <subject> - <url>`).
 
 ---
@@ -411,7 +425,7 @@ Mutation directe, exécution strictement séquentielle.
 
 ## 5. SheetsWriter
 
-`markInitialRow` / `closeRow`, batching à 3 cas. Chacune des trois méthodes (`markInitialRow`, `updateOutput`, `closeRow`) met aussi à jour `mmm_last_run` (format `d/M/yyyy HH:mm`) dans le même appel API.
+Quatre méthodes publiques — `markInitialRow`, `resetOutputs` (réinitialise `mmm_outputs` à `{}`, utilisée par la purge — §3), `updateOutput` (écriture incrémentale, fusion avec `mmm_outputs` existant), `closeRow` — passent toutes par le même `writeCells` privé (batching). Chacune des quatre met aussi à jour `mmm_last_run` (format `d/M/yyyy HH:mm`) dans le même appel API.
 
 ### Détection des colonnes en double (`findDuplicateHeaders`)
 
@@ -589,7 +603,7 @@ Toutes ces validations sont **statiques** — détectables via `--validate` sans
 
 ### Emplacement du fichier de profil
 
-`configs/<nom-du-profil>.json` (`loader.ts`) — un fichier par profil, nommé exactement comme l'argument positionnel de la commande (`mmmerge <profil>`).
+`configs/<nom-du-profil>.json` (`loader.ts`) — un fichier par profil, nommé exactement comme l'argument positionnel de la commande (`mmmerge <profil>`). `configs/` est résolu depuis `PROJECT_ROOT` (`paths.ts`, §1), pas depuis `process.cwd()` — fonctionne quel que soit le dossier courant.
 
 ### `--validate`
 

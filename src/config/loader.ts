@@ -7,11 +7,12 @@ import { join } from 'node:path';
 import mri from 'mri';
 import type { ZodError } from 'zod';
 import { ProfileSchema, type Config } from './schema.js';
+import { PROJECT_ROOT } from '../paths.js';
 
 const GLOBAL_KEYS = ['sheetId', 'sheetTabName', 'autoCreateFolders', 'defaultDateFormat'];
 
 function readProfileFile(profileName: string): Record<string, unknown> {
-  const path = join(process.cwd(), 'configs', `${profileName}.json`);
+  const path = join(PROJECT_ROOT, 'configs', `${profileName}.json`);
   let raw: string;
   try {
     raw = readFileSync(path, 'utf-8');

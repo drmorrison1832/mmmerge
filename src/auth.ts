@@ -8,9 +8,10 @@ import { join } from 'node:path';
 import { URL } from 'node:url';
 import { google, type Auth } from 'googleapis';
 import { loggedStep } from './pipeline/log.js';
+import { PROJECT_ROOT } from './paths.js';
 
-const CREDENTIALS_PATH = join(process.cwd(), 'credentials.json');
-const TOKEN_PATH = join(process.cwd(), 'token.json');
+const CREDENTIALS_PATH = join(PROJECT_ROOT, 'credentials.json');
+const TOKEN_PATH = join(PROJECT_ROOT, 'token.json');
 
 const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',

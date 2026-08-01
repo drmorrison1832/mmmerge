@@ -1,7 +1,9 @@
 # Spécifications Techniques & Fonctionnelles : "MMMerge"
 
-> **Dernière mise à jour :** 2026-08-01 — v17
-> **Résumé des derniers changements :** `--verbose` réintroduit (§5), avec un rôle entièrement différent de son ancien sens (v13, où il gouvernait le logging de progression — rôle repris par le fait que ce logging est désormais actif par défaut) : affiche en fin d'exécution le détail ligne par ligne de chaque document/email généré, groupé par instance. Indépendant de `--quiet`. `mmm_outputs.mail[i]` (§1) gagne un champ `to` (destinataire résolu), nécessaire pour ce détail. Voir architecture.md v19 pour le détail technique.
+> **Dernière mise à jour :** 2026-08-01 — v18
+> **Résumé des derniers changements :** `mmmerge` fonctionne désormais depuis n'importe quel dossier une fois lié via `npm link` (`configs/`/`credentials.json`/`token.json` résolus depuis l'emplacement du script, plus depuis le dossier courant). La confirmation de succès du logging de progression (§5) devient une ligne compacte `→ OK` plutôt que la répétition du message complet. Voir architecture.md v20 pour le détail technique.
+>
+> **Résumé v17 (2026-08-01) :** `--verbose` réintroduit (§5), avec un rôle entièrement différent de son ancien sens (v13, où il gouvernait le logging de progression — rôle repris par le fait que ce logging est désormais actif par défaut) : affiche en fin d'exécution le détail ligne par ligne de chaque document/email généré, groupé par instance. Indépendant de `--quiet`. `mmm_outputs.mail[i]` (§1) gagne un champ `to` (destinataire résolu), nécessaire pour ce détail. Voir architecture.md v19 pour le détail technique.
 >
 > **Résumé v16 (2026-07-31) :** Nouveau champ `template_link` (§3, `gdocs`/`pdf` uniquement) : chaîne libre purement informative (typiquement l'URL du template), jamais lue par l'application — un aide-mémoire pour l'utilisateur. Correction d'une régression sur l'affichage des erreurs fatales : la trace de pile technique s'affichait par défaut au lieu d'un message clair (introduit par erreur lors du remplacement de `--verbose` par `--quiet` en v13), pouvant faire passer une simple erreur de saisie (ex: `--lines=1`, qui cible la ligne d'en-tête) pour un crash. Toujours `Erreur : <message>` désormais, quel que soit `--quiet`. Voir architecture.md v18 pour le détail technique.
 >
@@ -192,7 +194,7 @@ Compose et envoie (ou met en brouillon) un ou plusieurs emails par ligne, avec l
 - `externalFolder` (chaîne avec balises, requis si `external` est utilisé) : chemin du dossier Drive dans lequel chercher les fichiers désignés par `external` (résolution dynamique identique à `output_folder`, voir architecture.md §7 — mais toujours stricte, jamais soumise à `autoCreateFolders`).
 - `external` (tableau de chaînes avec balises) : chaque entrée se résout en un nom de fichier à chercher dans `externalFolder`.
   - `Erreur` si un nom résolu est introuvable dans le dossier, si plusieurs fichiers y portent ce nom exact (ambiguïté — le message liste les IDs Drive des fichiers en conflit, pour identifier lequel supprimer/renommer), ou si deux entrées du tableau se résolvent au même nom (doublon).
-- Écrit `{"subject": ..., "url": ..., "attachments": [...], "createdAt": ...}` dans `mmm_outputs` sous la clé `mail[i]` (`attachments` = les `filename` effectivement joints, toutes sources confondues).
+- Écrit `{"to": ..., "subject": ..., "url": ..., "draftOnly": ..., "attachments": [...], "createdAt": ...}` dans `mmm_outputs` sous la clé `mail[i]` (`to` = destinataire résolu, `attachments` = les `filename` effectivement joints, toutes sources confondues — voir §1 pour l'exemple complet).
 
 ---
 
@@ -210,9 +212,9 @@ Un module est actif dès lors que son tableau est non vide (`gdocs`/`pdf`/`mail`
 
 ### Paramètres Par Module
 
-- **`gdocs`** (tableau) : `template_id`, **exactement une** des deux clés `output_folder` (chemin, balises autorisées, résolu dynamiquement — voir architecture.md §7) ou `output_folder_id`, `output_filename` (chaîne, avec ou sans balises), `share` (optionnel, voir §3), `name`/`description` (optionnels, voir §3).
-- **`pdf`** (tableau, même structure que `gdocs`, sans `share`) : `template_id`, `output_folder` / `output_folder_id`, `output_filename`, `name`/`description`.
-- **`mail`** (tableau) : voir §3 pour le détail des clés (`to`, `cc`, `subject`, `template_html`/`template_html_path`, `draft_only`, `attach`, `generated`, `externalFolder`, `external`, `name`/`description`).
+- **`gdocs`** (tableau) : `template_id`, **exactement une** des deux clés `output_folder` (chemin, balises autorisées, résolu dynamiquement — voir architecture.md §7) ou `output_folder_id`, `output_filename` (chaîne, avec ou sans balises), `share` (optionnel, voir §3), `name`/`description`/`disable`/`template_link` (optionnels, voir §3).
+- **`pdf`** (tableau, même structure que `gdocs`, sans `share`) : `template_id`, `output_folder` / `output_folder_id`, `output_filename`, `name`/`description`/`disable`/`template_link`.
+- **`mail`** (tableau) : voir §3 pour le détail des clés (`to`, `cc`, `subject`, `template_html`/`template_html_path`, `draft_only`, `attach`, `generated`, `externalFolder`, `external`, `name`/`description`/`disable` — pas de `template_link`, qui n'a de sens que pour un template Drive externe).
 
 ### Hiérarchie de Configuration
 
@@ -240,7 +242,16 @@ Syntaxe générale : `--[clé]` ou `--[clé]=[valeur]`, réservée aux **paramè
 
 ### Logging de progression en temps réel
 
-Par défaut, chaque action impliquant un appel réseau (authentification, lecture/écriture Sheets, copie/lecture/remplissage de template, export PDF, partage, résolution de dossier, recherche/téléchargement de pièce jointe, création de brouillon/envoi d'email...) est annoncée en console juste avant d'être lancée, puis confirmée (`: OK`) une fois résolue avec succès. Objectif : pouvoir déterminer précisément, à tout moment d'une exécution, ce que le script est en train de faire — notamment distinguer une exécution lente en cours d'une exécution réellement bloquée. En cas d'échec, seule l'annonce apparaît (jamais de `: OK`), ce qui situe déjà l'erreur avant même son message. `--quiet` supprime ces annonces et ne conserve que l'affichage minimal : avertissements (lignes masquées, purge, colonnes système créées...), résumé final, et ligne en cause en cas d'arrêt sur erreur — ce qui correspond à l'affichage par défaut des versions précédentes de MMMerge, avant l'introduction de ce logging.
+Par défaut, chaque action impliquant un appel réseau (authentification, lecture/écriture Sheets, copie/lecture/remplissage de template, export PDF, partage, résolution de dossier, recherche/téléchargement de pièce jointe, création de brouillon/envoi d'email...) est annoncée en console juste avant d'être lancée (`"<action>..."`), puis confirmée par une ligne `→ OK` une fois résolue avec succès. Exemple :
+
+```
+Authentification : vérification du jeton stocké...
+→ OK
+Lecture de l'en-tête du Sheet (onglet "Contrats")...
+→ OK
+```
+
+Objectif : pouvoir déterminer précisément, à tout moment d'une exécution, ce que le script est en train de faire — notamment distinguer une exécution lente en cours d'une exécution réellement bloquée. En cas d'échec, seule l'annonce apparaît (jamais de `→ OK`), ce qui situe déjà l'erreur avant même son message. `--quiet` supprime ces annonces et ne conserve que l'affichage minimal : avertissements (lignes masquées, purge, colonnes système créées...), résumé final, et ligne en cause en cas d'arrêt sur erreur — ce qui correspond à l'affichage par défaut des versions précédentes de MMMerge, avant l'introduction de ce logging.
 
 ### Résumé de fin d'exécution
 
@@ -278,7 +289,7 @@ Avant toute authentification ou lecture du Sheet, s'il existe au moins une insta
 - **Détection automatique des fichiers orphelins** en cas de crash technique non intercepté entre la création d'une instance et l'écriture incrémentale de `mmm_outputs` (la fenêtre d'exposition est réduite par l'écriture incrémentale, §2, mais pas éliminée).
 - **Nettoyage automatique des brouillons Gmail** de tentatives précédentes (§2, §3) — une ligne relancée plusieurs fois avec `draft_only: true` peut accumuler des brouillons, à supprimer manuellement si besoin.
 - **Filtre de condition par profil** : restreindre le traitement aux lignes respectant des conditions sur les colonnes du Sheet, appliqué *avant* toute écriture de statut. Non implémenté ; l'architecture doit prévoir son emplacement (avant la création du `RowContext`).
-- **Registre de types/formatteurs étendu** : au-delà de `string`/`date` et de leurs modificateurs actuels. Également envisagé : déclarer des variables requises/typées au niveau du profil plutôt qu'inline.
+- **Registre de types/formatteurs étendu** : au-delà de `string`/`date`/`number`/`euro` et de leurs modificateurs actuels. Également envisagé : déclarer des variables requises/typées au niveau du profil plutôt qu'inline.
 - **`processHidden`** : choisir explicitement de traiter ou d'ignorer les lignes masquées (actuellement toujours ignorées avec alerte).
 - **Export PDF direct** (sans passer par un Google Doc temporaire), à évaluer plus tard si l'API le permet.
 - **`ProfileManager`/`ExecutionDispatcher`** : gestion des profils via interface web, et répartition automatique des lignes d'un même Sheet vers plusieurs profils. Idée en réflexion, non détaillée davantage pour l'instant.

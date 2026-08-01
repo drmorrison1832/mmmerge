@@ -40,7 +40,7 @@ npm run build
 npm link
 ```
 
-Rend la commande `mmmerge` disponible depuis un terminal, sans publication npm. `configs/`, `credentials.json` et `token.json` sont cherchés relativement au dossier **courant** — lancer `mmmerge` depuis la racine de ce projet, même une fois la commande liée globalement.
+Rend la commande `mmmerge` disponible depuis un terminal, sans publication npm. `configs/`, `credentials.json` et `token.json` sont cherchés relativement à la racine du projet (résolue depuis l'emplacement du script lui-même, pas le dossier courant) — `mmmerge` fonctionne donc depuis n'importe quel dossier une fois lié globalement, pas seulement depuis la racine du projet.
 
 ## Première authentification
 
@@ -272,7 +272,16 @@ node dist/cli.js <profil> [options]
 | `--verbose` | Affiche en fin d'exécution le détail ligne par ligne de chaque document/email généré, groupé par instance (voir exemple ci-dessous). Indépendant de `--quiet`, qui ne concerne que le logging de progression. |
 | `--help-templates` | Affiche la syntaxe des balises (voir section précédente) et quitte — utilisable sans profil. |
 
-Par défaut, chaque appel réseau (Sheets/Drive/Docs/Gmail) est annoncé en console avant d'être lancé, puis confirmé (`: OK`) une fois terminé — utile pour savoir précisément où en est une exécution longue, ou ce qui est en cours si le script semble bloqué. `--quiet` revient à un affichage minimal (avertissements, résumé final, ligne en cause en cas d'erreur).
+Par défaut, chaque appel réseau (Sheets/Drive/Docs/Gmail) est annoncé en console avant d'être lancé, puis confirmé par une ligne `→ OK` une fois terminé — utile pour savoir précisément où en est une exécution longue, ou ce qui est en cours si le script semble bloqué :
+
+```
+Authentification : vérification du jeton stocké...
+→ OK
+Lecture de l'en-tête du Sheet (onglet "Contrats")...
+→ OK
+```
+
+`--quiet` revient à un affichage minimal (avertissements, résumé final, ligne en cause en cas d'erreur).
 
 Code de sortie `0` (succès, ou aucune ligne à traiter) ou `1` (erreur — le statut est toujours écrit sur le Sheet avant l'arrêt). En fin d'exécution (hors `--validate`/`--list`), un résumé est affiché : lignes traitées, documents/PDF générés, emails composés, et la ligne en cause en cas d'arrêt sur erreur.
 
@@ -321,6 +330,9 @@ mmmerge CDDUA10 --init-columns
 
 # Lancement réel, mais sans le détail de progression (juste avertissements + résumé)
 mmmerge CDDUA10 --quiet
+
+# Lancement réel, avec la liste détaillée des documents/emails générés en plus du résumé
+mmmerge CDDUA10 --verbose
 
 # Combiner plusieurs flags : test à blanc, lignes ciblées, sans logs de progression
 mmmerge CDDUA10 --dry-run --lines=2,3 --quiet

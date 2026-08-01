@@ -39,6 +39,11 @@
 ## Détail : traitement d'une ligne (pipeline en 3 phases)
 
 ```
+                        Purge : tous les fichiers gdocs[i]/pdf[i] déjà
+                        référencés dans mmm_outputs → corbeille,
+                        mmm_outputs réinitialisé à {}
+                                 │
+                                 ▼
                         RowContext (créé pour la ligne)
                         outputs: {}
                                  │
@@ -47,6 +52,8 @@
         │  PHASE 1 : Création de fichiers             │
         │  (gDocs et PDF sont indépendants l'un       │
         │   de l'autre, chacun en tableau d'instances)│
+        │  Une instance `disable: true` est sautée,   │
+        │  sans appel API ni entrée dans outputs      │
         │                                              │
         │  gdocs[0] → gdocs[1] → ...                   │
         │  (partage éventuel du document via `share`) │
@@ -55,7 +62,9 @@
         │  pdf[0] → pdf[1] → ...                       │
         │       (chaque instance PDF crée en interne   │
         │        son propre gDoc temporaire, l'exporte │
-        │        en PDF, puis le supprime)             │
+        │        en PDF, puis le supprime — le fichier │
+        │        final reçoit l'extension .pdf si      │
+        │        absente du nom configuré)             │
         │                                              │
         │  → écrit dans outputs['gdocs[i]'] /          │
         │    outputs['pdf[i]'] : { filename, url }     │
@@ -63,7 +72,8 @@
                              ▼
         ┌────────────────────────────────────────────┐
         │  PHASE 2 : Mail (tableau d'instances)        │
-        │  Pour chaque instance mail[i], dans l'ordre :│
+        │  Pour chaque instance mail[i] non désactivée,│
+        │  dans l'ordre :                              │
         │  - résout ses propres pièces jointes en      │
         │    interne (generated: pdf[] uniquement,     │
         │    external: fichiers dans externalFolder)   │
@@ -72,7 +82,8 @@
         │  - crée le brouillon ou envoie le message     │
         │                                              │
         │  → écrit dans outputs['mail[i]'] :           │
-        │    { subject, url, attachments: [...] }      │
+        │    { to, subject, url, draftOnly,            │
+        │      attachments: [...] }                    │
         └───────────────────┬──────────────────────────┘
                              │
         ┌────────────────────┴───────────────────────┐
@@ -97,3 +108,5 @@
 - **PDF ne dépend pas de gDocs** : chaque instance PDF a son propre template et gère son propre cycle interne (Doc temporaire → export → suppression), invisible dans `mmm_outputs`.
 - **`mmm_status` reste du texte libre**, volontairement — c'est ce qui permet à l'utilisateur d'y écrire `skip` ou une note manuelle directement dans le Sheet.
 - N'importe quelle instance de n'importe quelle phase peut déclencher le chemin "Erreur" — la position dans le pipeline ne change rien à ce qui se passe ensuite (écriture du statut, puis arrêt).
+- **`disable: true`** (n'importe quelle instance, gdocs/pdf/mail) : sautée à l'exécution, sans jamais décaler les index de position des autres instances du tableau. Une instance `mail[]` ne peut pas référencer une instance désactivée (`generated`/`{{link:...}}`) — erreur détectée au chargement du profil, jamais en cours d'exécution.
+- **Logging de progression en temps réel** (actif par défaut, coupé par `--quiet`) : chaque appel réseau est annoncé puis confirmé (`→ OK`). **`--verbose`** ajoute, en fin d'exécution, la liste détaillée de chaque document/email généré — les deux flags sont indépendants l'un de l'autre.
