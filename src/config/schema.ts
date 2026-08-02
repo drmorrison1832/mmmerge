@@ -30,6 +30,16 @@ const InstanceMetaSchema = z.object({
   filter: FilterSchema.optional(),
 });
 
+/** Miroir de RESERVED_COLUMNS (sheetsWriter.ts) — dupliqué ici pour éviter un import circulaire. */
+const RESERVED_COLUMN_NAMES = ['mmm_status', 'mmm_outputs', 'mmm_last_run'] as const;
+
+export const ColumnsInstanceSchema = z
+  .object({
+    template: z.string(),
+    output_column: z.string(),
+  })
+  .merge(InstanceMetaSchema);
+
 const FileModuleFieldsSchema = z
   .object({
     template_id: z.string(),
@@ -117,8 +127,18 @@ export const ProfileSchema = z
     gdocs: z.array(GdocsInstanceSchema).optional().default([]),
     pdf: z.array(PdfInstanceSchema).optional().default([]),
     mail: z.array(MailInstanceSchema).optional().default([]),
+    columns: z.array(ColumnsInstanceSchema).optional().default([]),
   })
   .superRefine((config, ctx) => {
+    config.columns.forEach((columnsInstance, columnsIndex) => {
+      if ((RESERVED_COLUMN_NAMES as readonly string[]).includes(columnsInstance.output_column)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `columns[${columnsIndex}].output_column : "${columnsInstance.output_column}" est une colonne système réservée.`,
+        });
+      }
+    });
+
     const pdfRefs = new Set(config.pdf.map((_, i) => `pdf[${i}]`));
     const linkableRefs = new Set([
       ...config.gdocs.map((_, i) => `gdocs[${i}]`),
@@ -191,3 +211,4 @@ export type Config = z.infer<typeof ProfileSchema>;
 export type GdocsInstance = z.infer<typeof GdocsInstanceSchema>;
 export type PdfInstance = z.infer<typeof PdfInstanceSchema>;
 export type MailInstance = z.infer<typeof MailInstanceSchema>;
+export type ColumnsInstance = z.infer<typeof ColumnsInstanceSchema>;

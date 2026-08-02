@@ -1,7 +1,9 @@
 # Spécifications Techniques & Fonctionnelles : "MMMerge"
 
-> **Dernière mise à jour :** 2026-08-02 — v20
-> **Résumé des derniers changements :** Correction sur `filter` (§3, v19) : la comparaison `equals` est désormais **insensible à la casse** (`"CDD"` équivaut à `"cdd"`) — toujours sans normalisation des espaces (`" CDD"` ≠ `"CDD"`). Voir architecture.md v22 pour le détail technique.
+> **Dernière mise à jour :** 2026-08-02 — v21
+> **Résumé des derniers changements :** Nouveau module `columns` (§2, §3), tableau d'instances comme `gdocs`/`pdf`/`mail` : calcule une valeur (même syntaxe de balise que pour un nom de fichier) et l'écrit dans une colonne du Sheet (`output_column`), créée automatiquement si absente de l'en-tête — sans flag à activer, contrairement à `--init-columns` (colonnes système uniquement). S'exécute en **premier**, avant `gdocs[]`/`pdf[]`/`mail[]` : la valeur écrite est immédiatement utilisable via `{{output_column}}` par les instances suivantes de la même ligne. Accepte `name`/`description`/`disable`/`filter` comme les trois autres modules. Pas de `mmm_outputs` (pas un fichier à tracer/purger). Le résumé de fin d'exécution (§5) gagne une ligne "Colonnes renseignées". `output_column` ne peut pas être un nom de colonne système réservé — `Erreur` de configuration. Voir architecture.md v23 pour le détail technique.
+>
+> **Résumé v20 (2026-08-02) :** Correction sur `filter` (§3, v19) : la comparaison `equals` est désormais **insensible à la casse** (`"CDD"` équivaut à `"cdd"`) — toujours sans normalisation des espaces (`" CDD"` ≠ `"CDD"`). Voir architecture.md v22 pour le détail technique.
 >
 > **Résumé v19 (2026-08-02) :** Nouvelle clé `filter` (§3), commune à `gdocs`/`pdf`/`mail` : exécution conditionnelle **par ligne** (par opposition à `disable`, statique) — l'instance n'est exécutée pour une ligne donnée que si les valeurs de ses colonnes satisfont la condition configurée. Forme : `{ "match": "all" | "any" | "none", "conditions": [{ "label", "criterium": "equals", "value" }, ...] }` — comparaison stricte, sensible à la casse (voir correction ci-dessus). Colonne référencée absente du Sheet → `Erreur` immédiate (même règle que pour une balise de template). Instance filtrée pour une ligne → simplement ignorée pour cette ligne (comme `disable`, mais décidé ligne par ligne, jamais une `Erreur`), journalisé hors `--quiet`. Le résumé de fin d'exécution (§5) compte désormais les sorties **réellement produites** plutôt que `lignes traitées × instances actives`, qui aurait surcompté dès qu'un filtre exclut une instance sur certaines lignes. Contrairement à `disable`, une référence `generated`/`{{link:...}}` vers une instance filtrée ne peut pas être détectée statiquement (la ligne n'est pas connue au chargement du profil) : si une instance Mail référence (`generated`) une instance PDF dont le filtre n'a pas été satisfait pour la ligne en cours, le message d'erreur le précise désormais explicitement plutôt que de laisser un simple "introuvable" sans piste. Voir architecture.md v21 pour le détail technique.
 >
@@ -82,13 +84,15 @@ En cas de crash technique non intercepté, la ligne peut rester bloquée à `En 
 
 ## 2. Architecture Modulaire & Cycle de vie du Pipeline
 
-Le pipeline suit trois phases :
+Le pipeline suit quatre phases :
 
 ```
-[Filtre des lignes à traiter] → [Création de fichiers : gDocs, PDF, ...] → [Mail]
+[Filtre des lignes à traiter] → [Colonnes calculées] → [Création de fichiers : gDocs, PDF, ...] → [Mail]
 ```
 
 gDocs et PDF restent deux modules indépendants, chacun en tableau d'instances (voir §3). Il n'y a pas de phase Attachment séparée : chaque instance Mail résout ses propres pièces jointes en interne, puisque des instances Mail différentes peuvent avoir besoin de combinaisons différentes pour une même ligne.
+
+La phase "Colonnes calculées" (`columns[]`, §3) s'exécute en premier, avant même `gdocs[]` : une valeur qu'elle écrit devient immédiatement utilisable via une balise `{{...}}` normale par les phases suivantes, pour la même ligne.
 
 Au sein de la phase "Création de fichiers" : toutes les instances `gdocs[]` s'exécutent d'abord dans l'ordre du tableau, puis toutes les instances `pdf[]`. Ensuite, toutes les instances `mail[]` s'exécutent dans l'ordre du tableau.
 
@@ -115,7 +119,7 @@ Pour le MVP, toute ligne masquée dans le Google Sheet est **ignorée**, avec un
 
 ### Nom, description et désactivation (`name`, `description`, `disable`) — communs à toutes les instances
 
-Chaque instance (gDocs, PDF, ou Mail) accepte trois clés optionnelles :
+Chaque instance (Columns, gDocs, PDF, ou Mail) accepte trois clés optionnelles :
 - `name` (chaîne, ≤ 80 caractères) : un intitulé court et lisible (ex: `"CDDU en PDF"`, `"Mail notification manager"`). N'affecte **aucune** référence technique — `generated`, `{{link:...}}`, et les messages d'erreur continuent d'utiliser l'identifiant de position (`gdocs[0]`, `pdf[1]`...) comme référence stable. Quand `name` est renseigné, il s'affiche simplement **en plus** de cet identifiant dans les messages d'erreur.
 - `description` (chaîne, ≤ 500 caractères) : notes libres à l'usage de l'utilisateur, jamais utilisées par le système.
 - `disable` (booléen, défaut `false`) : contrairement aux deux clés précédentes, **affecte le comportement**. Une instance désactivée n'est jamais exécutée pour aucune ligne — aucun appel Drive/Docs/Gmail, aucune entrée écrite dans `mmm_outputs`. Elle **conserve son identifiant de position** (désactiver `gdocs[0]` ne renomme pas `gdocs[1]` en `gdocs[0]`), pour ne jamais invalider silencieusement une référence `generated`/`{{link:...}}` ailleurs dans le profil. Objectif principal : pouvoir désactiver temporairement un module en cours de configuration d'un profil (ex: template pas encore prêt), sans avoir à le retirer et le rajouter au tableau.
@@ -141,6 +145,16 @@ Une quatrième clé optionnelle, disponible sur `gdocs`/`pdf`/`mail` comme `disa
 - Colonne référencée (`label`) absente du Sheet → `Erreur` immédiate (même règle que pour une balise de template référençant une colonne absente, voir ci-dessus) — jamais un simple "condition non satisfaite" silencieux, qui masquerait une faute de frappe dans le profil.
 - Une instance dont le `filter` n'est pas satisfait pour une ligne donnée est **ignorée pour cette ligne uniquement** (comme `disable`, sans erreur ni appel Drive/Docs/Gmail), mais reste normalement exécutée pour toute autre ligne qui satisfait la condition. Un avertissement est journalisé (hors `--quiet`).
 - Contrairement à `disable`, une référence `generated`/`{{link:...}}` vers une instance filtrée ne peut **jamais** être invalidée statiquement (validable par `--validate`) : la valeur des colonnes qui décide du filtre n'est connue qu'au moment de traiter une ligne réelle. Si une instance Mail référence (`generated`) une instance PDF dont le filtre n'a pas été satisfait pour la ligne en cours, l'erreur "référence introuvable" (voir §3, Mail, ci-dessous) précise explicitement que l'instance référencée a un filtre configuré — piste immédiate sans avoir à consulter le profil.
+
+### Colonnes calculées (`columns`, tableau d'instances)
+
+Calcule une valeur à partir des colonnes (et, transitivement, des colonnes déjà calculées par une instance `columns[]` précédente sur la même ligne — voir ordre d'exécution, §2) en réutilisant exactement la même syntaxe de balise que pour un nom de fichier ou un corps d'email (`{{variable}}`, types, modificateurs — voir "Validation et formatage des balises" ci-dessous), puis écrit le résultat dans une colonne du Sheet, pour cette ligne. Chaque instance :
+
+- `template` (chaîne, avec balises) : la valeur à calculer — mêmes règles de résolution que `output_filename`/`subject`.
+- `output_column` (chaîne, nom littéral de colonne — **jamais** de balise) : le titre de la colonne cible. Si cette colonne n'existe pas encore dans l'en-tête du Sheet, elle est **créée automatiquement** (ajoutée en fin d'en-tête), sans flag à activer — contrairement à `--init-columns` qui ne concerne que les 3 colonnes système. Ne peut pas être l'un des noms réservés `mmm_status`/`mmm_outputs`/`mmm_last_run` — `Erreur` de configuration immédiate au chargement du profil.
+- S'exécute **avant** `gdocs[]`/`pdf[]`/`mail[]` (§2) : la valeur écrite est immédiatement disponible pour ces instances via une balise `{{output_column}}` ordinaire, exactement comme n'importe quelle autre colonne du Sheet.
+- Pas d'entrée dans `mmm_outputs` : une colonne calculée n'est pas un fichier à purger/tracer, juste une cellule recalculée à chaque exécution de la ligne, comme n'importe quelle autre écriture de cellule.
+- Deux instances `columns[]` ciblant la même `output_column` ne sont pas rejetées statiquement (un `filter` peut légitimement les rendre mutuellement exclusives) ; si les deux s'appliquent malgré tout à une même ligne, la dernière dans l'ordre du profil l'emporte (exécution séquentielle, §2).
 
 ### gDocs (tableau d'instances)
 
@@ -279,7 +293,7 @@ Objectif : pouvoir déterminer précisément, à tout moment d'une exécution, c
 
 ### Résumé de fin d'exécution
 
-Hors `--validate`/`--list`, chaque exécution (y compris `--dry-run`) affiche un résumé : nombre de lignes traitées avec succès, nombre de documents gDocs/PDF générés et d'emails composés, et le numéro de la ligne en cause si le script s'est arrêté sur une `Erreur`. Le nombre de sorties par module compte les sorties **réellement produites** (une instance `disable: true`, ou dont le `filter` n'a été satisfait par aucune ligne traitée, n'en produit aucune) — pas simplement `lignes traitées × nombre d'instances actives`, qui surcompterait dès qu'un `filter` exclut une instance active sur au moins une ligne.
+Hors `--validate`/`--list`, chaque exécution (y compris `--dry-run`) affiche un résumé : nombre de lignes traitées avec succès, nombre de colonnes renseignées, de documents gDocs/PDF générés et d'emails composés, et le numéro de la ligne en cause si le script s'est arrêté sur une `Erreur`. Le nombre de sorties par module compte les sorties **réellement produites** (une instance `disable: true`, ou dont le `filter` n'a été satisfait par aucune ligne traitée, n'en produit aucune) — pas simplement `lignes traitées × nombre d'instances actives`, qui surcompterait dès qu'un `filter` exclut une instance active sur au moins une ligne. Contrairement à `gdocs`/`pdf`/`mail`, `columns[]` n'apparaît pas dans le détail `--verbose` (§ ci-dessous) : le format ligne par ligne de ce détail (`<filename> : <url>` ou `<destinataire> - <sujet> - <url>`) ne convient pas à une simple valeur calculée — non traité pour l'instant.
 
 ### Détail `--verbose`
 

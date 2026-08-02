@@ -32,7 +32,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     gmail: {} as PipelineDeps['gmail'],
     sheetsWriter: { updateOutput } as unknown as PipelineDeps['sheetsWriter'],
     folderCache: new Map(),
-    profile: { sheetId: 's', sheetTabName: 't', autoCreateFolders: true, defaultDateFormat: 'd/M/yyyy', gdocs: [], pdf: [], mail: [] },
+    profile: { sheetId: 's', sheetTabName: 't', autoCreateFolders: true, defaultDateFormat: 'd/M/yyyy', gdocs: [], pdf: [], mail: [], columns: [] },
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
     dryRun: false,

@@ -9,6 +9,7 @@ import type { Config, Filter } from '../config/schema.js';
 import { runGdocsInstance } from './modules/gdocs.js';
 import { runPdfInstance } from './modules/pdf.js';
 import { runMailInstance } from './modules/mail.js';
+import { runColumnsInstance } from './modules/columns.js';
 import { ModuleError, type RowContext, type FileOutput, type MailOutput } from './rowContext.js';
 import type { PipelineDeps } from './deps.js';
 import { loggedStep } from './log.js';
@@ -202,7 +203,13 @@ function countByPrefix(report: ModuleReport, prefix: string): number {
   return total;
 }
 
-function printSummary(processedRows: number, profile: Config, report: ModuleReport, failure?: { rowNumber: number }): void {
+function printSummary(
+  processedRows: number,
+  profile: Config,
+  report: ModuleReport,
+  columnsWritten: number,
+  failure?: { rowNumber: number },
+): void {
   const hasActive = <T extends { disable?: boolean }>(instances: T[]): boolean =>
     instances.some((instance) => !instance.disable);
 
@@ -211,6 +218,7 @@ function printSummary(processedRows: number, profile: Config, report: ModuleRepo
   console.log(`  Lignes traitées avec succès : ${processedRows}`);
   // Compté à partir de report (sorties réellement produites), pas processedRows × nombre d'instances actives :
   // un `filter` peut faire qu'une instance active ne s'exécute pas sur toutes les lignes traitées.
+  if (hasActive(profile.columns)) console.log(`  Colonnes renseignées : ${columnsWritten}`);
   if (hasActive(profile.gdocs)) console.log(`  Documents gDocs générés : ${countByPrefix(report, 'gdocs[')}`);
   if (hasActive(profile.pdf)) console.log(`  Fichiers PDF générés : ${countByPrefix(report, 'pdf[')}`);
   if (hasActive(profile.mail)) console.log(`  Emails composés : ${countByPrefix(report, 'mail[')}`);
@@ -259,6 +267,7 @@ function printVerboseManifest(report: ModuleReport, profile: Config): void {
 /** Liste "type[index]" des instances désactivées (disable: true), tous modules confondus, dans l'ordre du profil. */
 function listDisabledInstances(profile: Config): string[] {
   return [
+    ...profile.columns.flatMap((instance, i) => (instance.disable ? [`columns[${i}]`] : [])),
     ...profile.gdocs.flatMap((instance, i) => (instance.disable ? [`gdocs[${i}]`] : [])),
     ...profile.pdf.flatMap((instance, i) => (instance.disable ? [`pdf[${i}]`] : [])),
     ...profile.mail.flatMap((instance, i) => (instance.disable ? [`mail[${i}]`] : [])),
@@ -274,12 +283,13 @@ export async function processRow(
   profile: Config,
   deps: PipelineDeps,
   nextRowNumber: number | undefined,
-): Promise<{ success: boolean; outputs: RowContext['outputs'] }> {
+): Promise<{ success: boolean; outputs: RowContext['outputs']; columnsWritten: number }> {
   if (!deps.quiet) console.log(`Ligne ${row.rowNumber} : démarrage.`);
   await purgeRowOutputs(deps.drive, deps.sheetsWriter, row, deps.quiet);
 
   const context: RowContext = { rowNumber: row.rowNumber, rawData: row.rawData, outputs: {} };
   let currentModuleName = '';
+  let columnsWritten = 0;
 
   const skipIfFiltered = (moduleName: string, instanceConfig: { filter?: Filter }): boolean => {
     if (matchesFilter(moduleName, instanceConfig.filter, context.rawData)) return false;
@@ -288,6 +298,15 @@ export async function processRow(
   };
 
   try {
+    for (const [index, instanceConfig] of profile.columns.entries()) {
+      currentModuleName = `columns[${index}]`;
+      if (instanceConfig.disable) continue;
+      if (skipIfFiltered(currentModuleName, instanceConfig)) continue;
+      await loggedStep(deps.quiet, `Ligne ${row.rowNumber} : ${currentModuleName}`, () =>
+        runColumnsInstance(currentModuleName, instanceConfig, context, deps),
+      );
+      columnsWritten++;
+    }
     for (const [index, instanceConfig] of profile.gdocs.entries()) {
       currentModuleName = `gdocs[${index}]`;
       if (instanceConfig.disable) continue;
@@ -319,12 +338,12 @@ export async function processRow(
         : { module: currentModuleName, message: (err as Error).message };
     await deps.sheetsWriter.closeRow(context, profile);
     console.error(`Ligne ${row.rowNumber} : Erreur - ${context.error.module} - ${context.error.message}`);
-    return { success: false, outputs: context.outputs };
+    return { success: false, outputs: context.outputs, columnsWritten };
   }
 
   await deps.sheetsWriter.closeRow(context, profile, nextRowNumber);
   console.log(`Ligne ${row.rowNumber} : Succès.`);
-  return { success: true, outputs: context.outputs };
+  return { success: true, outputs: context.outputs, columnsWritten };
 }
 
 export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<number> {
@@ -398,20 +417,22 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
 
   const report: ModuleReport = new Map();
   let processedRows = 0;
+  let columnsWritten = 0;
   for (let i = 0; i < eligibleRows.length; i++) {
     const row = eligibleRows[i];
     const nextRow = eligibleRows[i + 1];
     const result = await processRow(row, profile, deps, nextRow?.rowNumber);
     recordOutputs(report, row.rowNumber, result.outputs);
+    columnsWritten += result.columnsWritten;
     if (!result.success) {
-      printSummary(processedRows, profile, report, { rowNumber: row.rowNumber });
+      printSummary(processedRows, profile, report, columnsWritten, { rowNumber: row.rowNumber });
       if (cliFlags.verbose) printVerboseManifest(report, profile);
       return 1;
     }
     processedRows++;
   }
 
-  printSummary(processedRows, profile, report);
+  printSummary(processedRows, profile, report, columnsWritten);
   if (cliFlags.verbose) printVerboseManifest(report, profile);
   return 0;
 }

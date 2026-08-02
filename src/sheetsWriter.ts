@@ -54,6 +54,8 @@ export class SheetsWriter {
     private readonly sheetId: string,
     private readonly sheetTabName: string,
     private readonly columns: ColumnIndexes,
+    /** En-tête complet (pas seulement les colonnes réservées) — muté à chaque colonne créée par writeColumn. */
+    private headers: string[],
     private readonly dryRun: boolean,
     private readonly quiet: boolean,
   ) {}
@@ -122,7 +124,7 @@ export class SheetsWriter {
       columns[name] = headers.indexOf(name);
     }
 
-    return new SheetsWriter(sheets, sheetId, sheetTabName, columns, dryRun, quiet);
+    return new SheetsWriter(sheets, sheetId, sheetTabName, columns, headers, dryRun, quiet);
   }
 
   private cellRange(column: number, rowNumber: number): string {
@@ -208,5 +210,41 @@ export class SheetsWriter {
     }
 
     await this.writeCells(cells);
+  }
+
+  /** Retrouve l'index d'une colonne par son titre, en créant la colonne (fin d'en-tête) si elle est absente. */
+  private async resolveOrCreateColumn(columnName: string): Promise<number> {
+    const existingIndex = this.headers.indexOf(columnName);
+    if (existingIndex !== -1) return existingIndex;
+
+    const newIndex = this.headers.length;
+    const newHeaders = [...this.headers, columnName];
+
+    if (this.dryRun) {
+      console.log(`[dry-run] Colonne créée (simulée) : "${columnName}" (onglet "${this.sheetTabName}").`);
+    } else {
+      await loggedStep(this.quiet, `Création de la colonne "${columnName}"`, () =>
+        this.sheets.spreadsheets.values.update({
+          spreadsheetId: this.sheetId,
+          range: `${this.sheetTabName}!1:1`,
+          valueInputOption: 'RAW',
+          requestBody: { values: [newHeaders] },
+        }),
+      );
+      console.warn(`Colonne créée automatiquement : "${columnName}" (onglet "${this.sheetTabName}").`);
+    }
+
+    this.headers = newHeaders;
+    return newIndex;
+  }
+
+  /** Écrit une valeur calculée (module columns[]) dans une colonne libre, créée si besoin. */
+  async writeColumn(rowNumber: number, columnName: string, value: string): Promise<void> {
+    const column = await this.resolveOrCreateColumn(columnName);
+    const now = this.nowFormatted();
+    await this.writeCells([
+      { column, rowNumber, value },
+      { column: this.columns.mmm_last_run, rowNumber, value: now },
+    ]);
   }
 }

@@ -1,7 +1,7 @@
 # Architecture Technique : "MMMerge"
 
-> **Dernière mise à jour :** 2026-08-02 — v22
-> **Résumé des derniers changements :** Correction sur `filter` (v21) : `evaluateCondition` (`filterEngine.ts`) comparait `rawData[condition.label]` et `condition.value` avec `===` (sensible à la casse) — passé à `.toLowerCase()` des deux côtés sur demande explicite (`"CDD"`/`"cdd"` désormais équivalents). Aucune normalisation des espaces ajoutée (`" CDD"` reste distinct de `"CDD"`) — pas demandé, et un trim silencieux masquerait plus facilement une vraie faute de saisie dans la donnée source qu'une différence de casse.
+> **Dernière mise à jour :** 2026-08-02 — v23
+> **Résumé des derniers changements :** Nouveau module `columns` (§3, §6), tableau d'instances au même niveau que `gdocs`/`pdf`/`mail`. `ColumnsInstanceSchema` = `{ template: z.string(), output_column: z.string() }.merge(InstanceMetaSchema)` (donc `name`/`description`/`disable`/`filter` gratuits) ; `ProfileSchema` gagne `columns: z.array(ColumnsInstanceSchema).optional().default([])`, et son `superRefine` un nouveau check : `output_column` ne peut pas être l'un de `RESERVED_COLUMN_NAMES` (dupliqué localement dans `schema.ts` — un import de `sheetsWriter.ts`, qui importe déjà `Config` depuis `schema.ts`, créerait un cycle). Nouveau fichier `pipeline/modules/columns.ts` : `runColumnsInstance` résout `config.template` via `renderTemplateString` (exactement le même moteur que `output_filename`/`subject` — aucun changement à `templateEngine.ts`), écrit le résultat dans `context.rawData[config.output_column]` **avant** d'appeler `deps.sheetsWriter.writeColumn` — c'est cette seule ligne qui rend la valeur utilisable via une balise `{{output_column}}` ordinaire par `gdocs[]`/`pdf[]`/`mail[]` sur la même ligne, sans aucun mécanisme dédié. `orchestrator.ts` : `processRow` gagne une quatrième boucle (`profile.columns`, même pattern `disable`/`skipIfFiltered` que les trois autres), placée **avant** la boucle `gdocs[]` ; retourne désormais aussi `columnsWritten` (compteur incrémenté à chaque instance exécutée avec succès pour la ligne) ; `runPipeline` accumule ce compteur sur toute l'exécution et le passe à `printSummary` (nouveau paramètre), qui affiche `Colonnes renseignées : N` si au moins une instance `columns[]` est active ; `listDisabledInstances` inclut désormais `columns[i]`. `sheetsWriter.ts` : `SheetsWriter` conserve maintenant l'en-tête complet (`headers: string[]`, plus seulement les index des 3 colonnes réservées) comme état mutable ; nouvelle méthode privée `resolveOrCreateColumn` (cherche par titre, sinon ajoute en fin d'en-tête via `values.update` sur `!1:1` — même mécanisme que la création des colonnes système manquantes, mais **sans** flag `--init-columns` : toujours automatique) et nouvelle méthode publique `writeColumn` (résout/crée la colonne puis écrit la cellule + `mmm_last_run`, cohérent avec l'invariant existant "mmm_last_run reflète la dernière écriture touchant la ligne"). Délibérément **non fait** : pas d'entrée `mmm_outputs` pour `columns[]` (pas un fichier à purger — juste une cellule recalculée à chaque exécution, comme n'importe quelle colonne) ; pas de détail `--verbose` par ligne (le format `<filename> : <url>` / `<destinataire> - <sujet> - <url>` du manifeste existant ne convient pas à une valeur scalaire) ; pas de détection statique des `output_column` dupliqués entre deux instances `columns[]` (un `filter` peut légitimement les rendre mutuellement exclusifs — contrairement à un doublon dans `mail[].generated`, qui n'a aucun usage légitime).
 >
 > **Résumé v21 (2026-08-02) :** Nouvelle clé `filter` (§3, §6) sur `InstanceMetaSchema` (`config/schema.ts`), donc commune à `gdocs`/`pdf`/`mail` — exécution conditionnelle **par ligne** (contrairement à `disable`, réglage statique du profil), évaluée sur `rawData`. Forme : `{ "match": "all" | "any" | "none", "conditions": [{ "label", "criterium": "equals", "value" }, ...] }` (`conditions` non vide) — un combinateur (`match`) sur des conditions atomiques d'égalité stricte donne gratuitement les sémantiques "toutes", "au moins une", "aucune", sans avoir besoin d'opérateurs de comparaison variés dès le MVP ; `criterium` reste un enum à un seul membre pour l'instant, réservé à une extension future (`contains`, `not_equals`...) sans casser le format. Nouveau fichier `filterEngine.ts` : `matchesFilter(moduleName, filter, rawData)`, fonction pure — colonne référencée absente de `rawData` → `ModuleError` immédiate (cohérent avec la règle déjà existante pour une balise référençant une colonne absente, §3). Comparaison stricte, sensible à la casse, sans normalisation d'espaces (comportement par défaut retenu en l'absence d'un besoin contraire exprimé — voir correction v22 ci-dessus). `orchestrator.ts` : `processRow` gagne `skipIfFiltered` (appelé juste après le test `disable`, dans les trois boucles gdocs/pdf/mail), qui `continue` l'instance sans erreur si `matchesFilter` renvoie `false`, avec un log dédié (`"<ligne> : <instance> : filtre non satisfait, ignoré."`, hors `--quiet`). Contrairement à `disable`, une référence `generated`/`{{link:...}}` vers une instance filtrée ne peut **pas** être validée statiquement (la ligne n'est pas connue au chargement du profil) — `printSummary` (§5), qui comptait jusqu'ici `processedRows × nombre d'instances actives`, aurait donc surcompté dès qu'un filtre exclut une instance sur au moins une ligne traitée : remplacé par un calcul basé sur `report` (`ModuleReport`, déjà accumulé pour `--verbose`, v19) via la nouvelle fonction `countByPrefix` — compte les sorties **réellement produites**, correction plus qu'ajout puisque `report` existait déjà. **"Pourquoi a-t-elle été ignorée ?"** : `disable` étant déjà exclu statiquement (superRefine, §6), un `filter` non satisfait est désormais la seule cause restante d'une référence `generated` introuvable à l'exécution — `PipelineDeps` gagne un champ `profile: Config` (le profil complet, pour permettre à un module de retrouver la config d'une autre instance) ; nouvelle fonction partagée `resolveInstanceByRef(ref, profile)` (`utils.ts`, même regex que l'ancien `resolveInstanceName` privé de `sheetsWriter.ts`) ; `mail.ts` (`resolveAttachments`, branche `generated`) enrichit son message d'erreur d'une phrase dédiée quand l'instance référencée a un `filter` configuré. Le cas symétrique côté `{{link:...}}` dans le corps d'un mail est volontairement **non traité** : `templateEngine.ts`/`renderTemplateString` sont profil-agnostiques par conception (couche de rendu pure) — leur faire porter la connaissance du profil pour ce seul message d'erreur aurait été une régression de pureté disproportionnée par rapport au gain (l'erreur brute "référence introuvable" reste correcte, seulement moins détaillée).
 >
@@ -131,13 +131,13 @@ Le scope `drive` déjà présent couvre la modification des permissions de parta
 
 ## 3. Orchestrateur & Pipeline
 
-### Les trois phases
+### Les quatre phases
 
 ```
-[Filtre des lignes à traiter] → [Création de fichiers : gDocs, PDF, ...] → [Mail]
+[Filtre des lignes à traiter] → [Colonnes calculées] → [Création de fichiers : gDocs, PDF, ...] → [Mail]
 ```
 
-Chaque instance Mail résout ses propres pièces jointes en interne, via une fonction utilitaire partagée — pas de phase Attachment séparée.
+Chaque instance Mail résout ses propres pièces jointes en interne, via une fonction utilitaire partagée — pas de phase Attachment séparée. `columns[]` s'exécute en premier : `runColumnsInstance` écrit sa valeur dans `context.rawData` avant tout appel `gdocs[]`/`pdf[]`/`mail[]`, la rendant utilisable par une balise `{{...}}` ordinaire dans les phases suivantes, pour la même ligne.
 
 ### Nommage technique des instances
 
@@ -416,10 +416,10 @@ L'API Gmail n'offre pas de méthode haut niveau pour composer un message avec pi
 3. S'authentifie (§2).
 4. Détermine la liste des lignes à traiter (filtre structurel + `--lines`/`--force`).
 5. Écrit `En cours d'exécution` (+ `mmm_last_run`) sur la première ligne. Liste vide → sortie propre (code `0`).
-6. Pour chaque ligne : purge les sorties existantes, construit un `RowContext` (`outputs: {}`), annote chaque instance avec son identifiant technique, puis exécute dans l'ordre : instances `gdocs[]` (création → écriture incrémentale → `resolveShareSettings` si configuré), instances `pdf[]` (création → écriture incrémentale), instances `mail[]` (composition/envoi → écriture incrémentale) — une instance `disable: true` est sautée (`continue`) avant tout appel, **sans** consommer son tour dans l'exécution (mais son identifiant de position, lui, reste inchangé — §3, §6). Juste après ce test, `skipIfFiltered` évalue `instance.filter` (s'il existe) via `matchesFilter(moduleName, filter, context.rawData)` (`filterEngine.ts`) — si le filtre n'est pas satisfait pour cette ligne, l'instance est sautée (`continue`) exactement comme `disable`, avec un log dédié hors `--quiet` (`"<ligne> : <instance> : filtre non satisfait, ignoré."`), mais **sans** qu'il s'agisse d'une erreur : la ligne continue normalement vers les instances suivantes. Contrairement à `disable`, cette décision dépend de `rawData` et ne peut donc jamais être connue avant l'exécution réelle de la ligne. Toute erreur interrompt la ligne et le script (§8). Succès complet → `SheetsWriter.closeRow` final, qui ouvre aussi la ligne suivante (`markInitialRow` fusionné dans le même appel) — "ligne suivante" désigne la prochaine ligne **éligible** de la liste déjà filtrée à l'étape 4, pas nécessairement `rowNumber + 1`. `processRow` retourne `{ success, outputs }` plutôt qu'un simple booléen — `outputs` (le `RowContext.outputs` de la ligne, y compris en cas d'échec en cours de route) alimente le rapport `--verbose` (étape 9), via `recordOutputs`, quelle que soit l'issue de la ligne.
+6. Pour chaque ligne : purge les sorties existantes, construit un `RowContext` (`outputs: {}`), annote chaque instance avec son identifiant technique, puis exécute dans l'ordre : instances `columns[]` (calcul → écriture de la colonne, alimente `context.rawData` — voir §3), instances `gdocs[]` (création → écriture incrémentale → `resolveShareSettings` si configuré), instances `pdf[]` (création → écriture incrémentale), instances `mail[]` (composition/envoi → écriture incrémentale) — une instance `disable: true` est sautée (`continue`) avant tout appel, **sans** consommer son tour dans l'exécution (mais son identifiant de position, lui, reste inchangé — §3, §6). Juste après ce test, `skipIfFiltered` évalue `instance.filter` (s'il existe) via `matchesFilter(moduleName, filter, context.rawData)` (`filterEngine.ts`) — si le filtre n'est pas satisfait pour cette ligne, l'instance est sautée (`continue`) exactement comme `disable`, avec un log dédié hors `--quiet` (`"<ligne> : <instance> : filtre non satisfait, ignoré."`), mais **sans** qu'il s'agisse d'une erreur : la ligne continue normalement vers les instances suivantes. Contrairement à `disable`, cette décision dépend de `rawData` et ne peut donc jamais être connue avant l'exécution réelle de la ligne. Toute erreur interrompt la ligne et le script (§8). Succès complet → `SheetsWriter.closeRow` final, qui ouvre aussi la ligne suivante (`markInitialRow` fusionné dans le même appel) — "ligne suivante" désigne la prochaine ligne **éligible** de la liste déjà filtrée à l'étape 4, pas nécessairement `rowNumber + 1`. `processRow` retourne `{ success, outputs, columnsWritten }` plutôt qu'un simple booléen — `outputs` (le `RowContext.outputs` de la ligne, y compris en cas d'échec en cours de route) alimente le rapport `--verbose` (étape 9), via `recordOutputs`, quelle que soit l'issue de la ligne ; `columnsWritten` (nombre d'instances `columns[]` exécutées avec succès pour cette ligne) est accumulé séparément par `runPipeline` et transmis à `printSummary`.
 7. `--dry-run` : respecté individuellement par chaque module et `SheetsWriter`. Concrètement, chaque module (`gdocs`/`pdf`/`mail`) résout d'abord ses champs purs (nom de fichier, destinataires…, sans appel API), puis court-circuite avant tout appel Drive/Docs/Gmail réel si `dryRun` est actif, en écrivant une sortie synthétique (`url: '(dry-run)'`) via `SheetsWriter` — lui-même en écriture simulée (lectures réelles conservées).
 8. Logging de progression en temps réel (`loggedStep`, `pipeline/log.ts`) : actif par défaut, désactivable via `--quiet` (`deps.quiet`/`CliFlags.quiet`). Chaque appel réseau individuel (pas seulement les changements de ligne/instance) est enveloppé par `loggedStep`, qui logge `"<message>..."` juste avant l'appel puis une ligne `"→ OK"` (volontairement compacte, ne répète pas le message — voir v20) une fois résolu avec succès — aucun `"→ OK"` si l'appel échoue, ce qui situe déjà l'erreur avant même son message. `--quiet` ne change que cette verbosité de progression, jamais le comportement.
-9. `--verbose` (`CliFlags.verbose`, indépendant de `--quiet`) : après `printSummary` (succès ou échec), `printVerboseManifest(report, profile)` affiche le détail ligne par ligne de chaque sortie accumulée dans `report` (`ModuleReport`, `Map<string, Array<{ rowNumber, output }>>`, construit au fil des lignes par `recordOutputs`). Groupé par instance dans l'ordre du profil (`gdocs[]` puis `pdf[]` puis `mail[]`), instance omise si aucune entrée dans `report` (désactivée, ou jamais atteinte). `isMailOutput` (garde de type sur la présence de `to`) distingue le format de ligne gDocs/PDF (`<filename> : <url>`) du format Mail (`<to> - <subject> - <url>`).
+9. `--verbose` (`CliFlags.verbose`, indépendant de `--quiet`) : après `printSummary` (succès ou échec), `printVerboseManifest(report, profile)` affiche le détail ligne par ligne de chaque sortie accumulée dans `report` (`ModuleReport`, `Map<string, Array<{ rowNumber, output }>>`, construit au fil des lignes par `recordOutputs`). Groupé par instance dans l'ordre du profil (`gdocs[]` puis `pdf[]` puis `mail[]`), instance omise si aucune entrée dans `report` (désactivée, ou jamais atteinte). `isMailOutput` (garde de type sur la présence de `to`) distingue le format de ligne gDocs/PDF (`<filename> : <url>`) du format Mail (`<to> - <subject> - <url>`). `columns[]` n'alimente ni `report` ni ce détail — son compteur (`columnsWritten`) ne passe que par `printSummary`.
 
 ---
 
@@ -461,7 +461,46 @@ Mutation directe, exécution strictement séquentielle.
 
 ## 5. SheetsWriter
 
-Quatre méthodes publiques — `markInitialRow`, `resetOutputs` (réinitialise `mmm_outputs` à `{}`, utilisée par la purge — §3), `updateOutput` (écriture incrémentale, fusion avec `mmm_outputs` existant), `closeRow` — passent toutes par le même `writeCells` privé (batching). Chacune des quatre met aussi à jour `mmm_last_run` (format `d/M/yyyy HH:mm`) dans le même appel API.
+Cinq méthodes publiques — `markInitialRow`, `resetOutputs` (réinitialise `mmm_outputs` à `{}`, utilisée par la purge — §3), `updateOutput` (écriture incrémentale, fusion avec `mmm_outputs` existant), `closeRow`, `writeColumn` (§3, module `columns[]`) — passent toutes par le même `writeCells` privé (batching). Chacune met aussi à jour `mmm_last_run` (format `d/M/yyyy HH:mm`) dans le même appel API.
+
+### Colonnes libres : résolution et création à la volée (`resolveOrCreateColumn`, `writeColumn`)
+
+Contrairement aux trois colonnes réservées (index résolus une fois pour toutes à la construction, dans `columns: ColumnIndexes`), une colonne ciblée par `columns[]` (specs.md §3) n'est pas forcément connue à l'avance — `SheetsWriter` garde donc aussi l'en-tête complet (`headers: string[]`, mutable) en mémoire, initialisé à la même lecture que les colonnes réservées.
+
+```ts
+private async resolveOrCreateColumn(columnName: string): Promise<number> {
+  const existingIndex = this.headers.indexOf(columnName);
+  if (existingIndex !== -1) return existingIndex;
+
+  const newIndex = this.headers.length;
+  const newHeaders = [...this.headers, columnName];
+  if (this.dryRun) {
+    console.log(`[dry-run] Colonne créée (simulée) : "${columnName}"...`);
+  } else {
+    await loggedStep(this.quiet, `Création de la colonne "${columnName}"`, () =>
+      this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.sheetId,
+        range: `${this.sheetTabName}!1:1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [newHeaders] },
+      }),
+    );
+    console.warn(`Colonne créée automatiquement : "${columnName}"...`);
+  }
+  this.headers = newHeaders;
+  return newIndex;
+}
+
+async writeColumn(rowNumber: number, columnName: string, value: string): Promise<void> {
+  const column = await this.resolveOrCreateColumn(columnName);
+  await this.writeCells([
+    { column, rowNumber, value },
+    { column: this.columns.mmm_last_run, rowNumber, value: this.nowFormatted() },
+  ]);
+}
+```
+
+Même mécanisme d'ajout d'en-tête que les colonnes système manquantes (`SheetsWriter.create`, ci-dessus), mais **sans** flag équivalent à `--init-columns` : la création est toujours automatique, la contrepartie étant que `columns[].output_column` ne peut pas être l'un des noms réservés (vérifié statiquement, `config/schema.ts` §6). Création "à la volée" — la première ligne qui écrit réellement dans cette colonne (instance active, `filter` satisfait) la crée ; une instance jamais déclenchée (`disable`, ou filtre jamais satisfait sur aucune ligne traitée) ne crée jamais sa colonne. Une fois créée pendant l'exécution, `this.headers` est mis à jour en mémoire — un `writeColumn` suivant vers la même colonne (autre ligne, ou autre instance `columns[]`) ne déclenche pas une seconde création.
 
 ### Détection des colonnes en double (`findDuplicateHeaders`)
 
@@ -529,6 +568,14 @@ const InstanceMetaSchema = z.object({
   filter: FilterSchema.optional(), // exécution conditionnelle par ligne, évaluée sur rawData — voir filterEngine.ts
 });
 
+// Miroir de RESERVED_COLUMNS (sheetsWriter.ts) — dupliqué ici pour éviter un import circulaire.
+const RESERVED_COLUMN_NAMES = ['mmm_status', 'mmm_outputs', 'mmm_last_run'] as const;
+
+const ColumnsInstanceSchema = z.object({
+  template: z.string(),
+  output_column: z.string(),
+}).merge(InstanceMetaSchema);
+
 const FileModuleFieldsSchema = z.object({
   template_id: z.string(),
   template_link: z.string().optional(),
@@ -594,7 +641,14 @@ const ProfileSchema = z.object({
   gdocs: z.array(GdocsInstanceSchema).optional().default([]),
   pdf: z.array(PdfInstanceSchema).optional().default([]),
   mail: z.array(MailInstanceSchema).optional().default([]),
+  columns: z.array(ColumnsInstanceSchema).optional().default([]),
 }).superRefine((config, ctx) => {
+  config.columns.forEach((columnsInstance, columnsIndex) => {
+    if ((RESERVED_COLUMN_NAMES as readonly string[]).includes(columnsInstance.output_column)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `columns[${columnsIndex}].output_column : "${columnsInstance.output_column}" est une colonne système réservée.` });
+    }
+  });
+
   const pdfRefs = new Set(config.pdf.map((_, i) => `pdf[${i}]`));
   const linkableRefs = new Set([
     ...config.gdocs.map((_, i) => `gdocs[${i}]`),

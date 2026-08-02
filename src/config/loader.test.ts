@@ -29,6 +29,8 @@ describe('loadConfig', () => {
     removeFixture('__test-filter-valide');
     removeFixture('__test-filter-match-invalide');
     removeFixture('__test-filter-conditions-vide');
+    removeFixture('__test-columns-valide');
+    removeFixture('__test-columns-reserved');
   });
 
   it('charge le profil "exemple" et applique les valeurs par défaut absentes du fichier', () => {
@@ -203,5 +205,28 @@ describe('loadConfig', () => {
       }),
     );
     expect(() => loadConfig('__test-filter-conditions-vide', [])).toThrow(/conditions/);
+  });
+
+  it('"columns" (template + output_column) est accepté et chargé tel quel', () => {
+    writeFixture(
+      '__test-columns-valide',
+      JSON.stringify({
+        ...baseProfileFields(),
+        columns: [{ template: '{{Prenom}} {{Nom}}', output_column: 'NomComplet' }],
+      }),
+    );
+    const config = loadConfig('__test-columns-valide', []);
+    expect(config.columns[0]).toMatchObject({ template: '{{Prenom}} {{Nom}}', output_column: 'NomComplet', disable: false });
+  });
+
+  it('"columns[].output_column" ne peut pas cibler une colonne système réservée', () => {
+    writeFixture(
+      '__test-columns-reserved',
+      JSON.stringify({
+        ...baseProfileFields(),
+        columns: [{ template: '{{Nom}}', output_column: 'mmm_status' }],
+      }),
+    );
+    expect(() => loadConfig('__test-columns-reserved', [])).toThrow(/mmm_status.*réservée/s);
   });
 });

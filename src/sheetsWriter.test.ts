@@ -180,6 +180,7 @@ const baseProfile: Config = {
   gdocs: [],
   pdf: [{ disable: false, template_id: 't', output_folder: 'f', output_filename: 'n', name: 'Copie archives' }],
   mail: [],
+  columns: [],
 };
 
 describe('closeRow', () => {
@@ -225,6 +226,51 @@ describe('closeRow', () => {
     await writer.closeRow({ rowNumber: 5, rawData: {}, outputs: {} }, baseProfile);
 
     expect(cells.has(`${SHEET_TAB}!B6`)).toBe(false);
+  });
+});
+
+describe('writeColumn', () => {
+  it('écrit dans une colonne existante sans toucher à l\'en-tête', async () => {
+    const mock = createMockSheetsClient({ [`${SHEET_TAB}!1:1`]: [[...HEADERS, 'NomComplet']] });
+    const writer = await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB);
+
+    await writer.writeColumn(5, 'NomComplet', 'Marie Dupont');
+
+    expect(mock.cells.get(`${SHEET_TAB}!E5`)).toEqual([['Marie Dupont']]);
+    expect(mock.update).not.toHaveBeenCalled();
+    expect(mock.cells.get(`${SHEET_TAB}!D5`)?.[0][0]).toMatch(DATE_TIME_FORMAT); // mmm_last_run mis à jour
+  });
+
+  it('crée automatiquement la colonne (fin d\'en-tête) si son titre est absent', async () => {
+    const { writer, cells, update } = await createWriter();
+
+    await writer.writeColumn(5, 'NomComplet', 'Marie Dupont');
+
+    expect(update).toHaveBeenCalledWith({
+      spreadsheetId: 'sheet-id',
+      range: `${SHEET_TAB}!1:1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[...HEADERS, 'NomComplet']] },
+    });
+    expect(cells.get(`${SHEET_TAB}!E5`)).toEqual([['Marie Dupont']]);
+  });
+
+  it('ne crée la colonne qu\'une seule fois pour deux écritures successives (même run)', async () => {
+    const { writer, update } = await createWriter();
+
+    await writer.writeColumn(5, 'NomComplet', 'Marie Dupont');
+    await writer.writeColumn(6, 'NomComplet', 'Jean Martin');
+
+    expect(update).toHaveBeenCalledOnce();
+  });
+
+  it('dry-run : simule la création de colonne et l\'écriture, sans appel réseau', async () => {
+    const { writer, update, batchUpdate } = await createWriter({}, true);
+
+    await writer.writeColumn(5, 'NomComplet', 'Marie Dupont');
+
+    expect(update).not.toHaveBeenCalled();
+    expect(batchUpdate).not.toHaveBeenCalled();
   });
 });
 

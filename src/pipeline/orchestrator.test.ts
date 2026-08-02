@@ -61,6 +61,7 @@ function baseProfile(overrides: Partial<Config> = {}): Config {
     gdocs: [{ disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' }],
     pdf: [],
     mail: [],
+    columns: [],
     ...overrides,
   };
 }
@@ -239,6 +240,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): {
     updateOutput,
     closeRow,
     resetOutputs: vi.fn(async () => {}),
+    writeColumn: vi.fn(async () => {}),
   } as unknown as PipelineDeps['sheetsWriter'];
 
   const deps: PipelineDeps = {
@@ -375,6 +377,52 @@ describe('processRow', () => {
     expect(logged).toContain('Ligne 5 : gdocs[0] : filtre non satisfait, ignoré.');
     logSpy.mockRestore();
   });
+
+  it('exécute columns[] avant gdocs[], et rend la valeur calculée disponible via {{...}} pour gdocs[]', async () => {
+    const { deps } = createDeps();
+    const profile = baseProfile({
+      columns: [{ disable: false, template: '{{Nom}} recalculé', output_column: 'NomCalcule' }],
+      gdocs: [{ disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{NomCalcule}}' }],
+    });
+
+    await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
+
+    expect(deps.sheetsWriter.writeColumn).toHaveBeenCalledWith(5, 'NomCalcule', 'Dupont recalculé');
+    expect(deps.drive.files.copy).toHaveBeenCalledWith(
+      expect.objectContaining({ requestBody: expect.objectContaining({ name: 'Doc Dupont recalculé' }) }),
+    );
+  });
+
+  it('columns[] respecte disable/filter comme les autres modules', async () => {
+    const { deps } = createDeps();
+    const profile = baseProfile({
+      columns: [
+        { disable: true, template: 'x', output_column: 'A' },
+        { disable: false, template: 'y', output_column: 'B', filter: { match: 'all', conditions: [{ label: 'Nom', criterium: 'equals', value: 'Martin' }] } },
+      ],
+      gdocs: [],
+    });
+
+    const { success } = await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
+
+    expect(success).toBe(true);
+    expect(deps.sheetsWriter.writeColumn).not.toHaveBeenCalled();
+  });
+
+  it('retourne columnsWritten = nombre d\'instances columns[] exécutées avec succès pour la ligne', async () => {
+    const { deps } = createDeps();
+    const profile = baseProfile({
+      columns: [
+        { disable: false, template: 'x', output_column: 'A' },
+        { disable: false, template: 'y', output_column: 'B' },
+      ],
+      gdocs: [],
+    });
+
+    const { columnsWritten } = await processRow(makeRow(), profile, deps, undefined);
+
+    expect(columnsWritten).toBe(2);
+  });
 });
 
 describe('runPipeline (intégration)', () => {
@@ -390,6 +438,11 @@ describe('runPipeline (intégration)', () => {
 
     const batchUpdate = vi.fn(async ({ requestBody }: { requestBody: { data: { range: string; values: unknown[][] }[] } }) => {
       for (const entry of requestBody.data) cells.set(entry.range, entry.values);
+      return { data: {} };
+    });
+
+    const update = vi.fn(async ({ range, requestBody }: { range: string; requestBody: { values: unknown[][] } }) => {
+      cells.set(range, requestBody.values);
       return { data: {} };
     });
 
@@ -410,9 +463,9 @@ describe('runPipeline (intégration)', () => {
     }));
 
     const sheets = {
-      spreadsheets: { get: spreadsheetsGet, values: { get, batchUpdate } },
+      spreadsheets: { get: spreadsheetsGet, values: { get, batchUpdate, update } },
     } as unknown as sheets_v4.Sheets;
-    return { sheets, cells, get, batchUpdate, spreadsheetsGet };
+    return { sheets, cells, get, batchUpdate, update, spreadsheetsGet };
   }
 
   function createMockDrive() {
@@ -516,6 +569,33 @@ describe('runPipeline (intégration)', () => {
     const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
     expect(logged).toContain('Lignes traitées avec succès : 2');
     expect(logged).toContain('Documents gDocs générés : 2');
+    logSpy.mockRestore();
+  });
+
+  it('le résumé compte les colonnes renseignées, et crée la colonne cible automatiquement', async () => {
+    const { sheets, update } = createMockSheetsClient([
+      ['Dupont', '', '', ''],
+      ['Martin', '', '', ''],
+    ]);
+    const { drive } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const profile = baseProfile({
+      gdocs: [],
+      columns: [{ disable: false, template: '{{Nom}} recalculé', output_column: 'NomCalcule' }],
+    });
+
+    const code = await runPipeline(profile, baseCliFlags());
+
+    expect(code).toBe(0);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ requestBody: { values: [[...HEADERS, 'NomCalcule']] } }),
+    );
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('Colonnes renseignées : 2');
     logSpy.mockRestore();
   });
 

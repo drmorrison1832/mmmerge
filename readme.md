@@ -107,6 +107,13 @@ Chaque profil est un fichier JSON dans `configs/<nom-du-profil>.json`. Exemple c
       "attach": "generated",
       "generated": ["pdf[0]"]
     }
+  ],
+  "columns": [
+    {
+      "name": "Nom complet",
+      "template": "{{Prenom}} {{Nom}}",
+      "output_column": "NomComplet"
+    }
   ]
 }
 ```
@@ -115,7 +122,8 @@ Points clés :
 - `gdocs`/`pdf` : chaque instance a **exactement une** des deux clés `output_folder` (chemin dynamique, balises autorisées, créé automatiquement selon `autoCreateFolders`) ou `output_folder_id` (ID Drive littéral).
 - `share` (gdocs uniquement) : partage du document généré — `email` et/ou `link`, permission `reader`/`commenter`/`editor`.
 - `mail` : corps via **exactement une** des deux clés `template_html` (inline) ou `template_html_path` (fichier externe). `attach` (`all`/`generated`/`external`/`none`) détermine les pièces jointes ; `generated` référence uniquement des instances `pdf[]` (un gDoc ne s'attache pas — utiliser `{{link:gdocs[i]}}` dans le corps pour un lien de consultation).
-- `gdocs[0]`, `pdf[1]`, `mail[0]`... sont les identifiants techniques de position — stables, utilisés dans les erreurs, `generated`, `{{link:...}}`. La clé `name` (optionnelle) n'est qu'un affichage, jamais une référence.
+- `columns` : calcule une valeur (`template`, même syntaxe de balise qu'ailleurs) et l'écrit dans une colonne du Sheet (`output_column`) — créée automatiquement si elle n'existe pas encore. S'exécute **avant** `gdocs`/`pdf`/`mail`, donc `{{NomComplet}}` (exemple ci-dessus) est utilisable comme une balise normale dans leurs templates, pour la même ligne (voir exemple dédié plus bas).
+- `gdocs[0]`, `pdf[1]`, `mail[0]`, `columns[0]`... sont les identifiants techniques de position — stables, utilisés dans les erreurs, `generated`, `{{link:...}}`. La clé `name` (optionnelle) n'est qu'un affichage, jamais une référence.
 - `disable` (optionnel, tous types d'instance, défaut `false`) : désactive l'instance — ignorée à l'exécution, sans décaler les index des autres. Pratique pour désactiver temporairement un module en cours de configuration d'un profil. Une instance `mail[]` ne peut pas référencer (`generated`, `{{link:...}}`) une instance désactivée — erreur de configuration immédiate au chargement du profil, jamais au milieu d'une exécution.
 - `filter` (optionnel, tous types d'instance) : contrairement à `disable` (statique), exécute l'instance **seulement pour les lignes** dont les colonnes satisfont la condition configurée — voir exemple ci-dessous. Une instance filtrée pour une ligne donnée est simplement ignorée pour cette ligne, sans erreur.
 - `pdf[].output_filename` : l'extension `.pdf` est ajoutée automatiquement si absente (`CDDU {{Nom}}` devient `CDDU Dupont.pdf`) — insensible à la casse, jamais de doublon si `.pdf`/`.PDF` est déjà présent dans le nom résolu. Ne s'applique qu'au module `pdf` (un `gdocs[].output_filename` n'a pas d'extension à ajouter).
@@ -176,6 +184,28 @@ Points clés :
 ```
 
 `match` combine les conditions : `all` (toutes vraies), `any` (au moins une), `none` (aucune). Une instance `mail[]` qui référence (`generated`) une instance filtrée reçoit un message d'erreur explicite si le filtre n'a pas été satisfait pour la ligne en cours.
+
+**Colonne calculée (`columns`), réutilisée dans un nom de fichier** — `NomComplet` est calculé une fois puis utilisé tel quel par l'instance `pdf[0]`, sans dupliquer `{{Prenom}} {{Nom}}` dans chaque `output_filename` :
+
+```json
+{
+  "columns": [
+    {
+      "template": "{{Prenom}} {{Nom}}",
+      "output_column": "NomComplet"
+    }
+  ],
+  "pdf": [
+    {
+      "template_id": "1TemplatePdfIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_folder_id": "1DriveFolderIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_filename": "CDDU {{NomComplet}}"
+    }
+  ]
+}
+```
+
+Si `NomComplet` n'existe pas déjà comme colonne du Sheet, elle est créée automatiquement (ajoutée en fin d'en-tête) — aucun flag à activer. `columns[]` s'exécute toujours en premier, avant `gdocs`/`pdf`/`mail`.
 
 **Email avec pièce jointe externe** (`attach: "external"`, un fichier déjà présent sur Drive, pas généré par ce profil) :
 
@@ -307,7 +337,7 @@ Lecture de l'en-tête du Sheet (onglet "Contrats")...
 
 `--quiet` revient à un affichage minimal (avertissements, résumé final, ligne en cause en cas d'erreur).
 
-Code de sortie `0` (succès, ou aucune ligne à traiter) ou `1` (erreur — le statut est toujours écrit sur le Sheet avant l'arrêt). En fin d'exécution (hors `--validate`/`--list`), un résumé est affiché : lignes traitées, documents/PDF générés, emails composés, et la ligne en cause en cas d'arrêt sur erreur.
+Code de sortie `0` (succès, ou aucune ligne à traiter) ou `1` (erreur — le statut est toujours écrit sur le Sheet avant l'arrêt). En fin d'exécution (hors `--validate`/`--list`), un résumé est affiché : lignes traitées, colonnes renseignées, documents/PDF générés, emails composés, et la ligne en cause en cas d'arrêt sur erreur.
 
 ### `--verbose` : détail des documents générés
 
@@ -329,7 +359,7 @@ mail[0]
   ligne 8 : martin@example.com - Votre contrat CDDU - https://mail.google.com/mail/u/0/#drafts?compose=...
 ```
 
-Une instance sans `name` configuré n'affiche que son identifiant (`mail[0]`, sans le `- "..."`). Une instance désactivée (`disable`), ou qui n'a généré aucune sortie (toutes ses lignes en erreur avant qu'elle ne s'exécute), n'apparaît pas du tout.
+Une instance sans `name` configuré n'affiche que son identifiant (`mail[0]`, sans le `- "..."`). Une instance désactivée (`disable`), ou qui n'a généré aucune sortie (toutes ses lignes en erreur avant qu'elle ne s'exécute), n'apparaît pas du tout. `columns[]` n'apparaît jamais dans ce détail (juste dans le compteur "Colonnes renseignées" du résumé) — le format ligne par ligne ne se prête pas à une simple valeur calculée.
 
 ### Exemples de commandes
 
