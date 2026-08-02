@@ -169,24 +169,24 @@ function createMockSheetsWriter() {
 }
 
 describe('purgeRowOutputs', () => {
-  it('met à la corbeille les fichiers gdocs[i]/pdf[i] référencés, jamais mail[i]', async () => {
+  it('met à la corbeille les fichiers gdocs[i]/pdf[i] référencés (instances actives ou orphelines), jamais mail[i]', async () => {
     const update = vi.fn(async () => ({ data: {} }));
     const drive = { files: { update } } as unknown as drive_v3.Drive;
     const sheetsWriter = createMockSheetsWriter();
 
     const outputs = {
       'gdocs[0]': { filename: 'x', url: 'https://docs.google.com/document/d/GDOC-ID/edit' },
-      'pdf[0]': { filename: 'y', url: 'https://drive.google.com/file/d/PDF-ID/view' },
-      'mail[0]': { url: 'https://mail.google.com/mail/u/0/#drafts/DRAFT-ID' },
+      'pdf[0]': { filename: 'y', url: 'https://drive.google.com/file/d/PDF-ID/view' }, // orpheline : profil.pdf est vide
+      'mail[0]': { url: 'https://mail.google.com/mail/u/0/#drafts/DRAFT-ID' }, // orpheline aussi
     };
     const row = makeRow({ outputsRaw: JSON.stringify(outputs) });
 
-    await purgeRowOutputs(drive, sheetsWriter, row);
+    await purgeRowOutputs(drive, sheetsWriter, row, baseProfile());
 
     expect(update).toHaveBeenCalledWith({ fileId: 'GDOC-ID', requestBody: { trashed: true } });
     expect(update).toHaveBeenCalledWith({ fileId: 'PDF-ID', requestBody: { trashed: true } });
     expect(update).toHaveBeenCalledTimes(2); // pas mail[0]
-    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5);
+    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, {});
   });
 
   it("continue et journalise si la mise à la corbeille d'un fichier échoue", async () => {
@@ -198,9 +198,9 @@ describe('purgeRowOutputs', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const row = makeRow({ outputsRaw: JSON.stringify({ 'gdocs[0]': { url: 'https://docs.google.com/document/d/X/edit' } }) });
-    await purgeRowOutputs(drive, sheetsWriter, row);
+    await purgeRowOutputs(drive, sheetsWriter, row, baseProfile());
 
-    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5);
+    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, {});
     warnSpy.mockRestore();
   });
 
@@ -209,16 +209,117 @@ describe('purgeRowOutputs', () => {
     const sheetsWriter = createMockSheetsWriter();
     const row = makeRow({ outputsRaw: 'pas du json' });
 
-    await expect(purgeRowOutputs(drive, sheetsWriter, row)).rejects.toThrow(/JSON valide/);
+    await expect(purgeRowOutputs(drive, sheetsWriter, row, baseProfile())).rejects.toThrow(/JSON valide/);
   });
 
   it('réinitialise mmm_outputs même sans rien à purger', async () => {
     const drive = { files: { update: vi.fn() } } as unknown as drive_v3.Drive;
     const sheetsWriter = createMockSheetsWriter();
 
-    await purgeRowOutputs(drive, sheetsWriter, makeRow({ outputsRaw: '' }));
+    await purgeRowOutputs(drive, sheetsWriter, makeRow({ outputsRaw: '' }), baseProfile());
 
-    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5);
+    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, {});
+  });
+
+  it("conserve (sans la purger) la sortie d'une instance désactivée", async () => {
+    const update = vi.fn(async () => ({ data: {} }));
+    const drive = { files: { update } } as unknown as drive_v3.Drive;
+    const sheetsWriter = createMockSheetsWriter();
+    const entry = { filename: 'x', url: 'https://docs.google.com/document/d/GDOC-ID/edit' };
+    const row = makeRow({ outputsRaw: JSON.stringify({ 'gdocs[0]': entry }) });
+    const profile = baseProfile({
+      gdocs: [{ disable: true, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'n' }],
+    });
+
+    await purgeRowOutputs(drive, sheetsWriter, row, profile);
+
+    expect(update).not.toHaveBeenCalled();
+    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, { 'gdocs[0]': entry });
+  });
+
+  it("conserve (sans la purger) la sortie d'une instance dont le filtre ne correspond pas à cette ligne", async () => {
+    const update = vi.fn(async () => ({ data: {} }));
+    const drive = { files: { update } } as unknown as drive_v3.Drive;
+    const sheetsWriter = createMockSheetsWriter();
+    const entry = { filename: 'y', url: 'https://drive.google.com/file/d/PDF-ID/view' };
+    const row = makeRow({ rawData: { Type: 'CDI' }, outputsRaw: JSON.stringify({ 'pdf[0]': entry }) });
+    const profile = baseProfile({
+      pdf: [
+        {
+          disable: false,
+          template_id: 't',
+          output_folder_id: 'f',
+          output_filename: 'n',
+          filter: { match: 'all', conditions: [{ label: 'Type', criterium: 'equals', value: 'CDD' }] },
+        },
+      ],
+    });
+
+    await purgeRowOutputs(drive, sheetsWriter, row, profile);
+
+    expect(update).not.toHaveBeenCalled();
+    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, { 'pdf[0]': entry });
+  });
+
+  it('purge normalement une instance active dont le filtre correspond à cette ligne (régénération à venir)', async () => {
+    const update = vi.fn(async () => ({ data: {} }));
+    const drive = { files: { update } } as unknown as drive_v3.Drive;
+    const sheetsWriter = createMockSheetsWriter();
+    const entry = { filename: 'y', url: 'https://drive.google.com/file/d/PDF-ID/view' };
+    const row = makeRow({ rawData: { Type: 'CDD' }, outputsRaw: JSON.stringify({ 'pdf[0]': entry }) });
+    const profile = baseProfile({
+      pdf: [
+        {
+          disable: false,
+          template_id: 't',
+          output_folder_id: 'f',
+          output_filename: 'n',
+          filter: { match: 'all', conditions: [{ label: 'Type', criterium: 'equals', value: 'CDD' }] },
+        },
+      ],
+    });
+
+    await purgeRowOutputs(drive, sheetsWriter, row, profile);
+
+    expect(update).toHaveBeenCalledWith({ fileId: 'PDF-ID', requestBody: { trashed: true } });
+    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, {});
+  });
+
+  it("conserve aussi la sortie mail[i] d'une instance désactivée (ne disparaît plus de mmm_outputs)", async () => {
+    const drive = { files: { update: vi.fn() } } as unknown as drive_v3.Drive;
+    const sheetsWriter = createMockSheetsWriter();
+    const entry = { to: 'x@example.com', subject: 's', url: 'https://mail.google.com/mail/u/0/#drafts?compose=1', draftOnly: true, attachments: [], createdAt: '2026-08-02T00:00:00Z' };
+    const row = makeRow({ outputsRaw: JSON.stringify({ 'mail[0]': entry }) });
+    const profile = baseProfile({
+      mail: [{ disable: true, to: '{{Email}}', cc: [], subject: 's', template_html: '<p>x</p>', draft_only: true, attach: 'none', generated: [], external: [] }],
+    });
+
+    await purgeRowOutputs(drive, sheetsWriter, row, profile);
+
+    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, { 'mail[0]': entry });
+  });
+
+  it("si le filtre n'est pas évaluable ici (colonne absente), préserve par sécurité sans planter la purge", async () => {
+    const drive = { files: { update: vi.fn() } } as unknown as drive_v3.Drive;
+    const sheetsWriter = createMockSheetsWriter();
+    const entry = { filename: 'y', url: 'https://drive.google.com/file/d/PDF-ID/view' };
+    const row = makeRow({ rawData: { Nom: 'Dupont' }, outputsRaw: JSON.stringify({ 'pdf[0]': entry }) });
+    const profile = baseProfile({
+      pdf: [
+        {
+          disable: false,
+          template_id: 't',
+          output_folder_id: 'f',
+          output_filename: 'n',
+          filter: { match: 'all', conditions: [{ label: 'Inconnue', criterium: 'equals', value: 'x' }] },
+        },
+      ],
+    });
+
+    await expect(purgeRowOutputs(drive, sheetsWriter, row, profile)).resolves.toBeUndefined();
+
+    expect(drive.files.update).not.toHaveBeenCalled();
+    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, { 'pdf[0]': entry });
   });
 });
 

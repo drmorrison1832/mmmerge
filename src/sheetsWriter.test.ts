@@ -142,6 +142,15 @@ describe('resetOutputs', () => {
     expect(cells.get(`${SHEET_TAB}!C5`)).toEqual([['{}']]);
     expect(cells.get(`${SHEET_TAB}!D5`)?.[0][0]).toMatch(DATE_TIME_FORMAT);
   });
+
+  it('écrit les entrées conservées (instance désactivée/filtrée) au lieu de {} quand elles sont fournies', async () => {
+    const { writer, cells } = await createWriter();
+    const preserved = { 'gdocs[0]': { filename: 'x', url: 'https://x', createdAt: '2026-08-02T00:00:00Z' } };
+
+    await writer.resetOutputs(5, preserved);
+
+    expect(JSON.parse(cells.get(`${SHEET_TAB}!C5`)?.[0][0] as string)).toEqual(preserved);
+  });
 });
 
 describe('updateOutput', () => {

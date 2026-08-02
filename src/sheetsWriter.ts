@@ -174,11 +174,15 @@ export class SheetsWriter {
     ]);
   }
 
-  /** Réinitialise mmm_outputs à {} — utilisé par la purge en début de ligne (architecture.md §3). */
-  async resetOutputs(rowNumber: number): Promise<void> {
+  /**
+   * Réinitialise mmm_outputs — utilisé par la purge en début de ligne (architecture.md §3).
+   * `preserved` (défaut {}) porte les entrées d'instances désactivées/filtrées pour cette ligne,
+   * qui ne s'exécutent pas cette fois-ci et dont la sortie précédente ne doit pas disparaître.
+   */
+  async resetOutputs(rowNumber: number, preserved: Record<string, FileOutput | MailOutput> = {}): Promise<void> {
     const now = this.nowFormatted();
     await this.writeCells([
-      { column: this.columns.mmm_outputs, rowNumber, value: '{}' },
+      { column: this.columns.mmm_outputs, rowNumber, value: JSON.stringify(preserved) },
       { column: this.columns.mmm_last_run, rowNumber, value: now },
     ]);
   }

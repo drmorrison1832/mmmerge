@@ -4,7 +4,7 @@
 import { google, type sheets_v4 } from 'googleapis';
 import { authenticate } from '../auth.js';
 import { SheetsWriter } from '../sheetsWriter.js';
-import { extractDriveFileId } from '../utils.js';
+import { extractDriveFileId, resolveInstanceByRef } from '../utils.js';
 import type { Config, Filter } from '../config/schema.js';
 import { runGdocsInstance } from './modules/gdocs.js';
 import { runPdfInstance } from './modules/pdf.js';
@@ -161,14 +161,21 @@ export function determineEligibleRows(rows: SheetRow[], hiddenRowNumbers: Set<nu
   return eligible;
 }
 
-/** Purge les fichiers gdocs[i]/pdf[i] déjà présents dans mmm_outputs, puis réinitialise mmm_outputs à {}. */
+/**
+ * Purge les fichiers gdocs[i]/pdf[i] qui vont être régénérés dans cette même exécution (ou dont
+ * l'instance a été retirée du profil, orpheline), puis réinitialise mmm_outputs — en conservant
+ * telles quelles les entrées d'une instance désactivée ou dont le filtre ne correspond pas à
+ * cette ligne : ces instances ne s'exécutent pas cette fois-ci, leur sortie n'a donc rien à voir
+ * avec une régénération et ne doit ni être purgée, ni disparaître de mmm_outputs.
+ */
 export async function purgeRowOutputs(
   drive: PipelineDeps['drive'],
   sheetsWriter: SheetsWriter,
   row: SheetRow,
+  profile: Config,
   quiet = true,
 ): Promise<void> {
-  let existingOutputs: Record<string, { url?: string }> = {};
+  let existingOutputs: Record<string, FileOutput | MailOutput> = {};
   if (row.outputsRaw) {
     try {
       existingOutputs = JSON.parse(row.outputsRaw);
@@ -177,21 +184,46 @@ export async function purgeRowOutputs(
     }
   }
 
+  const preserved: Record<string, FileOutput | MailOutput> = {};
+
   for (const [key, value] of Object.entries(existingOutputs)) {
-    if (!/^(gdocs|pdf)\[\d+\]$/.test(key)) continue; // mail[i] jamais nettoyé (specs.md §2, §3)
-    const url = value?.url;
-    if (!url) continue;
-    try {
-      const fileId = extractDriveFileId(url);
-      if (!quiet) console.log(`Ligne ${row.rowNumber} : mise à la corbeille de "${key}"...`);
-      await drive.files.update({ fileId, requestBody: { trashed: true } });
-      console.warn(`Ligne ${row.rowNumber} : fichier "${key}" mis à la corbeille (purge avant régénération).`);
-    } catch (err) {
-      console.warn(`Ligne ${row.rowNumber} : échec de mise à la corbeille de "${key}" (${(err as Error).message}).`);
+    const instance = resolveInstanceByRef(key, profile);
+
+    if (instance) {
+      let willRunThisRow: boolean;
+      try {
+        willRunThisRow = !instance.disable && matchesFilter(key, instance.filter, row.rawData);
+      } catch {
+        // Filtre non évaluable ici (ex: colonne absente) : par sécurité, on ne perd rien — la même
+        // erreur sera levée normalement par skipIfFiltered lors de l'exécution de la ligne.
+        willRunThisRow = false;
+      }
+      if (!willRunThisRow) {
+        preserved[key] = value; // désactivée, ou filtre non satisfait pour cette ligne : ni purgée, ni perdue
+        continue;
+      }
     }
+
+    // L'instance va régénérer cette sortie dans cette même exécution, ou a été retirée du profil
+    // (orpheline, plus jamais référencée) : dans les deux cas, rien à conserver ici.
+    if (/^(gdocs|pdf)\[\d+\]$/.test(key)) {
+      const url = (value as FileOutput | undefined)?.url;
+      if (url) {
+        try {
+          const fileId = extractDriveFileId(url);
+          if (!quiet) console.log(`Ligne ${row.rowNumber} : mise à la corbeille de "${key}"...`);
+          await drive.files.update({ fileId, requestBody: { trashed: true } });
+          console.warn(`Ligne ${row.rowNumber} : fichier "${key}" mis à la corbeille (purge avant régénération).`);
+        } catch (err) {
+          console.warn(`Ligne ${row.rowNumber} : échec de mise à la corbeille de "${key}" (${(err as Error).message}).`);
+        }
+      }
+    }
+    // mail[i] : jamais purgé (specs.md §2, §3) — l'entrée est simplement abandonnée (regénérée si
+    // l'instance s'exécute cette ligne, ou orpheline si elle a été retirée du profil).
   }
 
-  await sheetsWriter.resetOutputs(row.rowNumber);
+  await sheetsWriter.resetOutputs(row.rowNumber, preserved);
 }
 
 /** Nombre total d'entrées accumulées dans le rapport pour les instances "type[i]" (ex: préfixe "gdocs["). */
@@ -285,7 +317,7 @@ export async function processRow(
   nextRowNumber: number | undefined,
 ): Promise<{ success: boolean; outputs: RowContext['outputs']; columnsWritten: number }> {
   if (!deps.quiet) console.log(`Ligne ${row.rowNumber} : démarrage.`);
-  await purgeRowOutputs(deps.drive, deps.sheetsWriter, row, deps.quiet);
+  await purgeRowOutputs(deps.drive, deps.sheetsWriter, row, profile, deps.quiet);
 
   const context: RowContext = { rowNumber: row.rowNumber, rawData: row.rawData, outputs: {} };
   let currentModuleName = '';
