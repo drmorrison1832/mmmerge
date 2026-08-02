@@ -43,15 +43,20 @@ function createMockGmail() {
   return { gmail, draftsCreate, messagesSend };
 }
 
-function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps; updateOutput: ReturnType<typeof vi.fn> } {
+function createDeps(overrides: Partial<PipelineDeps> = {}): {
+  deps: PipelineDeps;
+  updateOutput: ReturnType<typeof vi.fn>;
+  writeColumn: ReturnType<typeof vi.fn>;
+} {
   const { drive } = createMockDrive([]);
   const { gmail } = createMockGmail();
   const updateOutput = vi.fn(async () => {});
+  const writeColumn = vi.fn(async () => {});
   const deps: PipelineDeps = {
     docs: {} as PipelineDeps['docs'],
     drive,
     gmail,
-    sheetsWriter: { updateOutput } as unknown as PipelineDeps['sheetsWriter'],
+    sheetsWriter: { updateOutput, writeColumn } as unknown as PipelineDeps['sheetsWriter'],
     folderCache: new Map(),
     profile: { sheetId: 's', sheetTabName: 't', autoCreateFolders: true, defaultDateFormat: 'd/M/yyyy', gdocs: [], pdf: [], mail: [], columns: [] },
     defaultDateFormat: 'd/M/yyyy',
@@ -60,12 +65,13 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     quiet: true,
     ...overrides,
   };
-  return { deps, updateOutput };
+  return { deps, updateOutput, writeColumn };
 }
 
 function baseConfig(overrides: Partial<MailInstance> = {}): MailInstance {
   return {
     disable: false,
+    link_column: false,
     to: '{{Email}}',
     cc: [],
     subject: 'Votre contrat',
@@ -167,6 +173,7 @@ describe('runMailInstance', () => {
         pdf: [
           {
             disable: false,
+            link_column: false,
             template_id: 't',
             output_folder_id: 'f',
             output_filename: 'n',
@@ -314,5 +321,31 @@ describe('runMailInstance', () => {
       createdAt: expect.any(String),
     });
     expect(updateOutput).toHaveBeenCalledWith(5, 'mail[0]', context.outputs['mail[0]']);
+  });
+
+  it("n'écrit dans aucune colonne quand link_column est absent (défaut)", async () => {
+    const { gmail } = createMockGmail();
+    const { deps, writeColumn } = createDeps({ gmail });
+
+    await runMailInstance('mail[0]', baseConfig(), baseContext(), deps);
+
+    expect(writeColumn).not.toHaveBeenCalled();
+  });
+
+  it('écrit l\'URL de sortie dans "<id> output" quand link_column est activé', async () => {
+    const { gmail } = createMockGmail();
+    const { deps, writeColumn } = createDeps({ gmail });
+
+    await runMailInstance('mail[0]', baseConfig({ link_column: true }), baseContext(), deps);
+
+    expect(writeColumn).toHaveBeenCalledWith(5, 'mail[0] output', 'https://mail.google.com/mail/u/0/#drafts?compose=draft-message-id');
+  });
+
+  it('écrit aussi la colonne en mode dry-run (URL synthétique)', async () => {
+    const { deps, writeColumn } = createDeps({ dryRun: true });
+
+    await runMailInstance('mail[0]', baseConfig({ link_column: true }), baseContext(), deps);
+
+    expect(writeColumn).toHaveBeenCalledWith(5, 'mail[0] output', '(dry-run)');
   });
 });

@@ -28,15 +28,20 @@ function createMockDrive() {
   return { drive, copy, exportFn, create, del };
 }
 
-function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps; updateOutput: ReturnType<typeof vi.fn> } {
+function createDeps(overrides: Partial<PipelineDeps> = {}): {
+  deps: PipelineDeps;
+  updateOutput: ReturnType<typeof vi.fn>;
+  writeColumn: ReturnType<typeof vi.fn>;
+} {
   const { docs } = createMockDocs();
   const { drive } = createMockDrive();
   const updateOutput = vi.fn(async () => {});
+  const writeColumn = vi.fn(async () => {});
   const deps: PipelineDeps = {
     docs,
     drive,
     gmail: {} as PipelineDeps['gmail'],
-    sheetsWriter: { updateOutput } as unknown as PipelineDeps['sheetsWriter'],
+    sheetsWriter: { updateOutput, writeColumn } as unknown as PipelineDeps['sheetsWriter'],
     folderCache: new Map(),
     profile: { sheetId: 's', sheetTabName: 't', autoCreateFolders: true, defaultDateFormat: 'd/M/yyyy', gdocs: [], pdf: [], mail: [], columns: [] },
     defaultDateFormat: 'd/M/yyyy',
@@ -45,12 +50,13 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     quiet: true,
     ...overrides,
   };
-  return { deps, updateOutput };
+  return { deps, updateOutput, writeColumn };
 }
 
 function baseConfig(overrides: Partial<PdfInstance> = {}): PdfInstance {
   return {
     disable: false,
+    link_column: false,
     template_id: 'template-id',
     output_folder_id: 'folder-id',
     output_filename: 'CDDU {{Nom}}',
@@ -166,5 +172,29 @@ describe('runPdfInstance', () => {
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({ requestBody: expect.objectContaining({ name: 'CDDU Dupont.PDF' }) }),
     );
+  });
+
+  it("n'écrit dans aucune colonne quand link_column est absent (défaut)", async () => {
+    const { deps, writeColumn } = createDeps();
+
+    await runPdfInstance('pdf[0]', baseConfig(), baseContext(), deps);
+
+    expect(writeColumn).not.toHaveBeenCalled();
+  });
+
+  it('écrit l\'URL de sortie dans "<id> output" quand link_column est activé', async () => {
+    const { deps, writeColumn } = createDeps();
+
+    await runPdfInstance('pdf[0]', baseConfig({ link_column: true }), baseContext(), deps);
+
+    expect(writeColumn).toHaveBeenCalledWith(5, 'pdf[0] output', 'https://drive.google.com/file/d/final-pdf-id/view');
+  });
+
+  it('écrit aussi la colonne en mode dry-run (URL synthétique)', async () => {
+    const { deps, writeColumn } = createDeps({ dryRun: true });
+
+    await runPdfInstance('pdf[0]', baseConfig({ link_column: true }), baseContext(), deps);
+
+    expect(writeColumn).toHaveBeenCalledWith(5, 'pdf[0] output', '(dry-run)');
   });
 });

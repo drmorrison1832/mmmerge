@@ -48,6 +48,8 @@ const FileModuleFieldsSchema = z
     output_folder: z.string().optional(),
     output_folder_id: z.string().optional(),
     output_filename: z.string(),
+    /** Écrit l'URL de sortie dans une colonne "<identifiant technique> output", créée si absente. */
+    link_column: z.boolean().optional().default(false),
   })
   .merge(InstanceMetaSchema);
 
@@ -97,6 +99,8 @@ export const MailInstanceSchema = z
     generated: z.array(z.string()).optional().default([]),
     externalFolder: z.string().optional(),
     external: z.array(z.string()).optional().default([]),
+    /** Écrit l'URL de sortie dans une colonne "<identifiant technique> output", créée si absente. */
+    link_column: z.boolean().optional().default(false),
   })
   .merge(InstanceMetaSchema)
   .refine((mail) => Boolean(mail.template_html) !== Boolean(mail.template_html_path), {

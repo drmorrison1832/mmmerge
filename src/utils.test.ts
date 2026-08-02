@@ -26,6 +26,7 @@ describe('resolveInstanceByRef', () => {
     pdf: [
       {
         disable: false,
+        link_column: false,
         filter: { match: 'all', conditions: [{ label: 'Type', criterium: 'equals', value: 'CDD' }] },
         template_id: 't',
         output_folder_id: 'f',

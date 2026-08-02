@@ -31,6 +31,7 @@ describe('loadConfig', () => {
     removeFixture('__test-filter-conditions-vide');
     removeFixture('__test-columns-valide');
     removeFixture('__test-columns-reserved');
+    removeFixture('__test-link-column');
   });
 
   it('charge le profil "exemple" et applique les valeurs par défaut absentes du fichier', () => {
@@ -81,6 +82,31 @@ describe('loadConfig', () => {
     const config = loadConfig('__test-disable-defaut', []);
     expect(config.gdocs[0].disable).toBe(false);
     expect(config.pdf[0].disable).toBe(true);
+  });
+
+  it('"link_column" vaut false par défaut, et est accepté sur gdocs/pdf/mail', () => {
+    writeFixture(
+      '__test-link-column',
+      JSON.stringify({
+        ...baseProfileFields(),
+        gdocs: [{ template_id: 't', output_folder_id: 'f', output_filename: 'n' }],
+        pdf: [{ link_column: true, template_id: 't2', output_folder_id: 'f2', output_filename: 'n2' }],
+        mail: [
+          {
+            link_column: true,
+            to: '{{Email}}',
+            subject: 'x',
+            template_html: '<p>x</p>',
+            draft_only: true,
+            attach: 'none',
+          },
+        ],
+      }),
+    );
+    const config = loadConfig('__test-link-column', []);
+    expect(config.gdocs[0].link_column).toBe(false);
+    expect(config.pdf[0].link_column).toBe(true);
+    expect(config.mail[0].link_column).toBe(true);
   });
 
   it('mail[].generated référençant une instance pdf[] désactivée → erreur explicite', () => {

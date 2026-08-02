@@ -58,7 +58,7 @@ function baseProfile(overrides: Partial<Config> = {}): Config {
     sheetTabName: SHEET_TAB,
     autoCreateFolders: true,
     defaultDateFormat: 'd/M/yyyy',
-    gdocs: [{ disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' }],
+    gdocs: [{ disable: false, link_column: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' }],
     pdf: [],
     mail: [],
     columns: [],
@@ -92,7 +92,7 @@ describe('validateResourceAccessibility', () => {
 
   it('ne vérifie pas output_folder_id quand seul output_folder (chemin dynamique) est configuré', async () => {
     const profile = baseProfile({
-      gdocs: [{ disable: false, template_id: 'template-id', output_folder: 'Contrats/{{Annee}}', output_filename: 'x' }],
+      gdocs: [{ disable: false, link_column: false, template_id: 'template-id', output_folder: 'Contrats/{{Annee}}', output_filename: 'x' }],
     });
     const { drive, get } = createMockDriveForFiles(['template-id']);
     const problems = await validateResourceAccessibility(drive, profile);
@@ -103,7 +103,7 @@ describe('validateResourceAccessibility', () => {
 
   it('vérifie aussi les instances pdf[]', async () => {
     const profile = baseProfile({
-      pdf: [{ disable: false, template_id: 'pdf-template', output_folder_id: 'pdf-folder', output_filename: 'x' }],
+      pdf: [{ disable: false, link_column: false, template_id: 'pdf-template', output_folder_id: 'pdf-folder', output_filename: 'x' }],
     });
     const drive = createMockDriveForFiles(['template-id', 'folder-id']).drive; // pdf-template/pdf-folder absents
     const problems = await validateResourceAccessibility(drive, profile);
@@ -115,7 +115,7 @@ describe('validateResourceAccessibility', () => {
   it('ignore les instances désactivées (aucune vérification Drive)', async () => {
     const { drive, get } = createMockDriveForFiles([]); // rien n'existe
     const profile = baseProfile({
-      gdocs: [{ disable: true, template_id: 'broken', output_folder_id: 'f', output_filename: 'x' }],
+      gdocs: [{ disable: true, link_column: false, template_id: 'broken', output_folder_id: 'f', output_filename: 'x' }],
     });
     const problems = await validateResourceAccessibility(drive, profile);
 
@@ -228,7 +228,7 @@ describe('purgeRowOutputs', () => {
     const entry = { filename: 'x', url: 'https://docs.google.com/document/d/GDOC-ID/edit' };
     const row = makeRow({ outputsRaw: JSON.stringify({ 'gdocs[0]': entry }) });
     const profile = baseProfile({
-      gdocs: [{ disable: true, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'n' }],
+      gdocs: [{ disable: true, link_column: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'n' }],
     });
 
     await purgeRowOutputs(drive, sheetsWriter, row, profile);
@@ -247,6 +247,7 @@ describe('purgeRowOutputs', () => {
       pdf: [
         {
           disable: false,
+          link_column: false,
           template_id: 't',
           output_folder_id: 'f',
           output_filename: 'n',
@@ -271,6 +272,7 @@ describe('purgeRowOutputs', () => {
       pdf: [
         {
           disable: false,
+          link_column: false,
           template_id: 't',
           output_folder_id: 'f',
           output_filename: 'n',
@@ -291,7 +293,7 @@ describe('purgeRowOutputs', () => {
     const entry = { to: 'x@example.com', subject: 's', url: 'https://mail.google.com/mail/u/0/#drafts?compose=1', draftOnly: true, attachments: [], createdAt: '2026-08-02T00:00:00Z' };
     const row = makeRow({ outputsRaw: JSON.stringify({ 'mail[0]': entry }) });
     const profile = baseProfile({
-      mail: [{ disable: true, to: '{{Email}}', cc: [], subject: 's', template_html: '<p>x</p>', draft_only: true, attach: 'none', generated: [], external: [] }],
+      mail: [{ disable: true, link_column: false, to: '{{Email}}', cc: [], subject: 's', template_html: '<p>x</p>', draft_only: true, attach: 'none', generated: [], external: [] }],
     });
 
     await purgeRowOutputs(drive, sheetsWriter, row, profile);
@@ -308,6 +310,7 @@ describe('purgeRowOutputs', () => {
       pdf: [
         {
           disable: false,
+          link_column: false,
           template_id: 't',
           output_folder_id: 'f',
           output_filename: 'n',
@@ -391,7 +394,7 @@ describe('processRow', () => {
   it("n'exécute pas pdf[]/mail[] après l'échec d'une instance gdocs[]", async () => {
     const { deps } = createDeps();
     (deps.drive.files.copy as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'));
-    const profile = baseProfile({ pdf: [{ disable: false, template_id: 't2', output_folder_id: 'f', output_filename: 'n' }] });
+    const profile = baseProfile({ pdf: [{ disable: false, link_column: false, template_id: 't2', output_folder_id: 'f', output_filename: 'n' }] });
 
     await processRow(makeRow(), profile, deps, undefined);
 
@@ -402,8 +405,8 @@ describe('processRow', () => {
     const { deps, updateOutput } = createDeps();
     const profile = baseProfile({
       gdocs: [
-        { disable: true, template_id: 'broken', output_folder_id: 'f', output_filename: 'skip' },
-        { disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' },
+        { disable: true, link_column: false, template_id: 'broken', output_folder_id: 'f', output_filename: 'skip' },
+        { disable: false, link_column: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' },
       ],
     });
 
@@ -421,6 +424,7 @@ describe('processRow', () => {
       gdocs: [
         {
           disable: false,
+          link_column: false,
           template_id: 'template-id',
           output_folder_id: 'folder-id',
           output_filename: 'Doc {{Nom}}',
@@ -442,6 +446,7 @@ describe('processRow', () => {
       gdocs: [
         {
           disable: false,
+          link_column: false,
           template_id: 'template-id',
           output_folder_id: 'folder-id',
           output_filename: 'Doc {{Nom}}',
@@ -463,6 +468,7 @@ describe('processRow', () => {
       gdocs: [
         {
           disable: false,
+          link_column: false,
           template_id: 'template-id',
           output_folder_id: 'folder-id',
           output_filename: 'Doc {{Nom}}',
@@ -483,7 +489,7 @@ describe('processRow', () => {
     const { deps } = createDeps();
     const profile = baseProfile({
       columns: [{ disable: false, template: '{{Nom}} recalculé', output_column: 'NomCalcule' }],
-      gdocs: [{ disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{NomCalcule}}' }],
+      gdocs: [{ disable: false, link_column: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{NomCalcule}}' }],
     });
 
     await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
@@ -715,6 +721,7 @@ describe('runPipeline (intégration)', () => {
       gdocs: [
         {
           disable: false,
+          link_column: false,
           template_id: 'template-id',
           output_folder_id: 'folder-id',
           output_filename: 'Doc {{Nom}}',
@@ -745,7 +752,7 @@ describe('runPipeline (intégration)', () => {
 
     const profile = baseProfile({
       gdocs: [
-        { disable: false, name: 'Contrat CDDU', template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' },
+        { disable: false, link_column: false, name: 'Contrat CDDU', template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' },
       ],
     });
 
@@ -771,7 +778,7 @@ describe('runPipeline (intégration)', () => {
 
     const profile = baseProfile({
       gdocs: [],
-      mail: [{ disable: false, to: '{{Nom}}', cc: [], subject: 'Sujet {{Nom}}', template_html: '<p>x</p>', draft_only: true, attach: 'none', generated: [], external: [] }],
+      mail: [{ disable: false, link_column: false, to: '{{Nom}}', cc: [], subject: 'Sujet {{Nom}}', template_html: '<p>x</p>', draft_only: true, attach: 'none', generated: [], external: [] }],
     });
 
     await runPipeline(profile, baseCliFlags({ verbose: true }));
@@ -807,8 +814,8 @@ describe('runPipeline (intégration)', () => {
 
     const profile = baseProfile({
       gdocs: [
-        { disable: true, template_id: 'broken', output_folder_id: 'f', output_filename: 'skip' },
-        { disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' },
+        { disable: true, link_column: false, template_id: 'broken', output_folder_id: 'f', output_filename: 'skip' },
+        { disable: false, link_column: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{Nom}}' },
       ],
     });
 

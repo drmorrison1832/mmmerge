@@ -14,6 +14,12 @@ function ensurePdfExtension(filename: string): string {
   return /\.pdf$/i.test(filename) ? filename : `${filename}.pdf`;
 }
 
+/** Si link_column est activé, écrit l'URL de sortie dans la colonne "<identifiant technique> output". */
+async function writeLinkColumn(moduleName: string, config: PdfInstance, rowNumber: number, url: string, deps: PipelineDeps): Promise<void> {
+  if (!config.link_column) return;
+  await deps.sheetsWriter.writeColumn(rowNumber, `${moduleName} output`, url);
+}
+
 export async function runPdfInstance(
   moduleName: string,
   config: PdfInstance,
@@ -35,6 +41,7 @@ export async function runPdfInstance(
     const output: FileOutput = { filename, url: '(dry-run)', createdAt: new Date().toISOString() };
     context.outputs[moduleName] = output;
     await deps.sheetsWriter.updateOutput(context.rowNumber, moduleName, output);
+    await writeLinkColumn(moduleName, config, context.rowNumber, output.url, deps);
     return;
   }
 
@@ -78,4 +85,5 @@ export async function runPdfInstance(
   };
   context.outputs[moduleName] = output;
   await deps.sheetsWriter.updateOutput(context.rowNumber, moduleName, output);
+  await writeLinkColumn(moduleName, config, context.rowNumber, output.url, deps);
 }
