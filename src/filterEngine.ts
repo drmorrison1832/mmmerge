@@ -9,8 +9,8 @@ function evaluateCondition(moduleName: string, condition: FilterCondition, rawDa
   if (!(condition.label in rawData)) {
     throw new ModuleError(moduleName, `Filtre : colonne "${condition.label}" absente du tableau`);
   }
-  // Un seul critère pour l'instant : égalité stricte, sans normalisation d'espaces/casse.
-  return rawData[condition.label] === condition.value;
+  // Un seul critère pour l'instant : égalité insensible à la casse, sans normalisation d'espaces.
+  return rawData[condition.label].toLowerCase() === condition.value.toLowerCase();
 }
 
 /** true si l'instance doit s'exécuter pour cette ligne — true si aucun filtre n'est configuré. */

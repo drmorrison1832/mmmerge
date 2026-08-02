@@ -51,9 +51,10 @@ describe('matchesFilter', () => {
     });
   });
 
-  it('comparaison stricte (sensible à la casse, aucun trim)', () => {
+  it('comparaison insensible à la casse, mais aucun trim des espaces', () => {
     const filter: Filter = { match: 'all', conditions: [{ label: 'Type', criterium: 'equals', value: 'CDD' }] };
-    expect(matchesFilter('gdocs[0]', filter, { Type: 'cdd' })).toBe(false);
+    expect(matchesFilter('gdocs[0]', filter, { Type: 'cdd' })).toBe(true);
+    expect(matchesFilter('gdocs[0]', filter, { Type: 'CdD' })).toBe(true);
     expect(matchesFilter('gdocs[0]', filter, { Type: ' CDD' })).toBe(false);
     expect(matchesFilter('gdocs[0]', filter, { Type: 'CDD' })).toBe(true);
   });
