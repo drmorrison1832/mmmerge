@@ -53,6 +53,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): { deps: PipelineDeps
     gmail,
     sheetsWriter: { updateOutput } as unknown as PipelineDeps['sheetsWriter'],
     folderCache: new Map(),
+    profile: { sheetId: 's', sheetTabName: 't', autoCreateFolders: true, defaultDateFormat: 'd/M/yyyy', gdocs: [], pdf: [], mail: [] },
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
     dryRun: false,
@@ -153,6 +154,32 @@ describe('runMailInstance', () => {
     await expect(
       runMailInstance('mail[0]', baseConfig({ attach: 'generated', generated: ['pdf[0]'] }), baseContext(), deps),
     ).rejects.toThrow(/introuvable dans les sorties/);
+  });
+
+  it('enrichit l\'erreur "generated" introuvable quand l\'instance référencée a un filtre configuré', async () => {
+    const { deps } = createDeps({
+      profile: {
+        sheetId: 's',
+        sheetTabName: 't',
+        autoCreateFolders: true,
+        defaultDateFormat: 'd/M/yyyy',
+        gdocs: [],
+        pdf: [
+          {
+            disable: false,
+            template_id: 't',
+            output_folder_id: 'f',
+            output_filename: 'n',
+            filter: { match: 'all', conditions: [{ label: 'Statut', criterium: 'equals', value: 'Actif' }] },
+          },
+        ],
+        mail: [],
+      },
+    });
+
+    await expect(
+      runMailInstance('mail[0]', baseConfig({ attach: 'generated', generated: ['pdf[0]'] }), baseContext(), deps),
+    ).rejects.toThrow(/filtre configuré/);
   });
 
   it('résout un fichier "external" via le dossier configuré (attach: "external")', async () => {

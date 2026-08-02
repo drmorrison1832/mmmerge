@@ -1,7 +1,9 @@
 # Architecture Technique : "MMMerge"
 
-> **Dernière mise à jour :** 2026-08-01 — v20
-> **Résumé des derniers changements :** Deux améliorations de confort en attente depuis plusieurs sessions. (1) Nouveau module `paths.ts` : `PROJECT_ROOT`, résolu depuis `import.meta.url` (via `fileURLToPath`, indispensable car le chemin du projet contient un espace — voir le commentaire du fichier) plutôt que `process.cwd()`. `loader.ts` (`configs/`) et `auth.ts` (`credentials.json`/`token.json`) l'utilisent désormais — `mmmerge` fonctionne depuis n'importe quel dossier une fois lié via `npm link`, vérifié en conditions réelles (lancé depuis `/tmp`). `paths.ts` doit rester à la racine de `src/` (comme il compile à la racine de `dist/`) pour que "un niveau au-dessus" pointe correctement vers la racine du projet, que le module soit exécuté compilé (`dist/paths.js`) ou directement (`src/paths.ts`, sous vitest). (2) `loggedStep` (`pipeline/log.ts`) : la confirmation de succès devient une ligne compacte `→ OK` plutôt que la répétition complète de `"<message> : OK"` — une vingtaine d'appels par exécution rendait la répétition redondante. Nouveau fichier de test `pipeline/log.test.ts` (n'existait pas jusqu'ici).
+> **Dernière mise à jour :** 2026-08-02 — v21
+> **Résumé des derniers changements :** Nouvelle clé `filter` (§3, §6) sur `InstanceMetaSchema` (`config/schema.ts`), donc commune à `gdocs`/`pdf`/`mail` — exécution conditionnelle **par ligne** (contrairement à `disable`, réglage statique du profil), évaluée sur `rawData`. Forme : `{ "match": "all" | "any" | "none", "conditions": [{ "label", "criterium": "equals", "value" }, ...] }` (`conditions` non vide) — un combinateur (`match`) sur des conditions atomiques d'égalité stricte donne gratuitement les sémantiques "toutes", "au moins une", "aucune", sans avoir besoin d'opérateurs de comparaison variés dès le MVP ; `criterium` reste un enum à un seul membre pour l'instant, réservé à une extension future (`contains`, `not_equals`...) sans casser le format. Nouveau fichier `filterEngine.ts` : `matchesFilter(moduleName, filter, rawData)`, fonction pure — colonne référencée absente de `rawData` → `ModuleError` immédiate (cohérent avec la règle déjà existante pour une balise référençant une colonne absente, §3). Comparaison stricte, sensible à la casse, sans normalisation d'espaces (comportement par défaut retenu en l'absence d'un besoin contraire exprimé). `orchestrator.ts` : `processRow` gagne `skipIfFiltered` (appelé juste après le test `disable`, dans les trois boucles gdocs/pdf/mail), qui `continue` l'instance sans erreur si `matchesFilter` renvoie `false`, avec un log dédié (`"<ligne> : <instance> : filtre non satisfait, ignoré."`, hors `--quiet`). Contrairement à `disable`, une référence `generated`/`{{link:...}}` vers une instance filtrée ne peut **pas** être validée statiquement (la ligne n'est pas connue au chargement du profil) — `printSummary` (§5), qui comptait jusqu'ici `processedRows × nombre d'instances actives`, aurait donc surcompté dès qu'un filtre exclut une instance sur au moins une ligne traitée : remplacé par un calcul basé sur `report` (`ModuleReport`, déjà accumulé pour `--verbose`, v19) via la nouvelle fonction `countByPrefix` — compte les sorties **réellement produites**, correction plus qu'ajout puisque `report` existait déjà. **"Pourquoi a-t-elle été ignorée ?"** : `disable` étant déjà exclu statiquement (superRefine, §6), un `filter` non satisfait est désormais la seule cause restante d'une référence `generated` introuvable à l'exécution — `PipelineDeps` gagne un champ `profile: Config` (le profil complet, pour permettre à un module de retrouver la config d'une autre instance) ; nouvelle fonction partagée `resolveInstanceByRef(ref, profile)` (`utils.ts`, même regex que l'ancien `resolveInstanceName` privé de `sheetsWriter.ts`) ; `mail.ts` (`resolveAttachments`, branche `generated`) enrichit son message d'erreur d'une phrase dédiée quand l'instance référencée a un `filter` configuré. Le cas symétrique côté `{{link:...}}` dans le corps d'un mail est volontairement **non traité** : `templateEngine.ts`/`renderTemplateString` sont profil-agnostiques par conception (couche de rendu pure) — leur faire porter la connaissance du profil pour ce seul message d'erreur aurait été une régression de pureté disproportionnée par rapport au gain (l'erreur brute "référence introuvable" reste correcte, seulement moins détaillée).
+>
+> **Résumé v20 (2026-08-01) :** Deux améliorations de confort en attente depuis plusieurs sessions. (1) Nouveau module `paths.ts` : `PROJECT_ROOT`, résolu depuis `import.meta.url` (via `fileURLToPath`, indispensable car le chemin du projet contient un espace — voir le commentaire du fichier) plutôt que `process.cwd()`. `loader.ts` (`configs/`) et `auth.ts` (`credentials.json`/`token.json`) l'utilisent désormais — `mmmerge` fonctionne depuis n'importe quel dossier une fois lié via `npm link`, vérifié en conditions réelles (lancé depuis `/tmp`). `paths.ts` doit rester à la racine de `src/` (comme il compile à la racine de `dist/`) pour que "un niveau au-dessus" pointe correctement vers la racine du projet, que le module soit exécuté compilé (`dist/paths.js`) ou directement (`src/paths.ts`, sous vitest). (2) `loggedStep` (`pipeline/log.ts`) : la confirmation de succès devient une ligne compacte `→ OK` plutôt que la répétition complète de `"<message> : OK"` — une vingtaine d'appels par exécution rendait la répétition redondante. Nouveau fichier de test `pipeline/log.test.ts` (n'existait pas jusqu'ici).
 >
 > **Résumé v19 (2026-08-01) :** `--verbose` réintroduit (§3 étape 9, §5), sans rapport avec son ancien rôle (v13 — désormais assuré par le logging de progression actif par défaut) : détail ligne par ligne des documents/emails générés, groupé par instance. `rowContext.ts` : `MailOutput` gagne `to: string` (destinataire résolu), écrit dans les trois branches de `runMailInstance` (dry-run, brouillon, envoi) — nécessaire pour afficher ce détail côté mail sans re-résoudre `config.to`. `orchestrator.ts` : `processRow` retourne désormais `{ success, outputs }` au lieu d'un booléen (`outputs` = `RowContext.outputs` de la ligne, même partiel en cas d'échec) ; nouveau type `ModuleReport` (`Map<string, Array<{ rowNumber, output }>>`) accumulé ligne par ligne dans `runPipeline` via la nouvelle fonction `recordOutputs` ; nouvelle fonction `printVerboseManifest` (avec sa garde de type `isMailOutput`, basée sur la présence de `to`) affichée après `printSummary`, réussite ou échec. `CliFlags.verbose` (nouveau, indépendant de `quiet`) n'est pas propagé à `PipelineDeps` : il n'est nécessaire qu'une fois, en toute fin de `runPipeline`, jamais à l'intérieur des modules.
 >
@@ -148,6 +150,30 @@ Cette purge globale remplace une vérification "par instance juste avant sa rég
 ### Exécution séquentielle
 
 Toutes les instances `gdocs[]` d'abord (ordre du tableau), puis toutes les instances `pdf[]`, puis toutes les instances `mail[]`. Aucun parallélisme.
+
+### Exécution conditionnelle par ligne (`filterEngine.ts`)
+
+`disable` (ci-dessus) est un réglage statique du profil — connu au chargement, jamais dépendant d'une ligne du Sheet. `filter` (specs.md §3) répond au besoin symétrique : sauter une instance pour certaines lignes seulement, selon leurs valeurs de colonnes. Cette dépendance à `rawData` interdit toute validation statique équivalente à celle de `disable` (§6) — la validité d'un `filter` ne peut être connue qu'au moment de traiter une ligne réelle.
+
+`matchesFilter(moduleName, filter, rawData)` (`filterEngine.ts`, fonction pure, aucun état) :
+```ts
+function evaluateCondition(moduleName, condition, rawData) {
+  if (!(condition.label in rawData)) {
+    throw new ModuleError(moduleName, `Filtre : colonne "${condition.label}" absente du tableau`);
+  }
+  return rawData[condition.label] === condition.value; // égalité stricte, sans normalisation
+}
+
+function matchesFilter(moduleName, filter, rawData) {
+  if (!filter) return true;
+  const results = filter.conditions.map((c) => evaluateCondition(moduleName, c, rawData));
+  if (filter.match === 'all') return results.every(Boolean);
+  if (filter.match === 'any') return results.some(Boolean);
+  return results.every((r) => !r); // 'none'
+}
+```
+
+Dans `processRow`, `skipIfFiltered` appelle `matchesFilter` juste après le test `disable`, dans chacune des trois boucles (gdocs/pdf/mail) : `filter` non satisfait → `continue` (comme `disable`), avec un log dédié hors `--quiet` — mais ce n'est jamais une `Erreur`, la ligne continue normalement.
 
 ### `templateEngine` : deux fonctions de sortie, un seul moteur d'analyse
 
@@ -349,7 +375,15 @@ async function resolveAttachments(
   const fromGenerated = config.attach === 'all' || config.attach === 'generated'
     ? config.generated.map((ref) => {
         const output = context.outputs[ref] as FileOutput | undefined;
-        if (!output) throw new ModuleError(moduleName, `Référence "${ref}" introuvable dans les sorties générées.`);
+        if (!output) {
+          // disable est déjà exclu statiquement (superRefine, §6) — un filter non satisfait
+          // est donc la seule cause restante d'une référence "generated" manquante ici.
+          const referenced = resolveInstanceByRef(ref, deps.profile);
+          const reason = referenced?.filter
+            ? ' Cette instance a un filtre configuré, qui n\'a peut-être pas été satisfait pour cette ligne.'
+            : '';
+          throw new ModuleError(moduleName, `Référence "${ref}" introuvable dans les sorties générées.${reason}`);
+        }
         return { fileId: extractDriveFileId(output.url), filename: output.filename, mimeType: 'application/pdf' };
       })
     : [];
@@ -380,7 +414,7 @@ L'API Gmail n'offre pas de méthode haut niveau pour composer un message avec pi
 3. S'authentifie (§2).
 4. Détermine la liste des lignes à traiter (filtre structurel + `--lines`/`--force`).
 5. Écrit `En cours d'exécution` (+ `mmm_last_run`) sur la première ligne. Liste vide → sortie propre (code `0`).
-6. Pour chaque ligne : purge les sorties existantes, construit un `RowContext` (`outputs: {}`), annote chaque instance avec son identifiant technique, puis exécute dans l'ordre : instances `gdocs[]` (création → écriture incrémentale → `resolveShareSettings` si configuré), instances `pdf[]` (création → écriture incrémentale), instances `mail[]` (composition/envoi → écriture incrémentale) — une instance `disable: true` est sautée (`continue`) avant tout appel, **sans** consommer son tour dans l'exécution (mais son identifiant de position, lui, reste inchangé — §3, §6). Toute erreur interrompt la ligne et le script (§8). Succès complet → `SheetsWriter.closeRow` final, qui ouvre aussi la ligne suivante (`markInitialRow` fusionné dans le même appel) — "ligne suivante" désigne la prochaine ligne **éligible** de la liste déjà filtrée à l'étape 4, pas nécessairement `rowNumber + 1`. `processRow` retourne `{ success, outputs }` plutôt qu'un simple booléen — `outputs` (le `RowContext.outputs` de la ligne, y compris en cas d'échec en cours de route) alimente le rapport `--verbose` (étape 9), via `recordOutputs`, quelle que soit l'issue de la ligne.
+6. Pour chaque ligne : purge les sorties existantes, construit un `RowContext` (`outputs: {}`), annote chaque instance avec son identifiant technique, puis exécute dans l'ordre : instances `gdocs[]` (création → écriture incrémentale → `resolveShareSettings` si configuré), instances `pdf[]` (création → écriture incrémentale), instances `mail[]` (composition/envoi → écriture incrémentale) — une instance `disable: true` est sautée (`continue`) avant tout appel, **sans** consommer son tour dans l'exécution (mais son identifiant de position, lui, reste inchangé — §3, §6). Juste après ce test, `skipIfFiltered` évalue `instance.filter` (s'il existe) via `matchesFilter(moduleName, filter, context.rawData)` (`filterEngine.ts`) — si le filtre n'est pas satisfait pour cette ligne, l'instance est sautée (`continue`) exactement comme `disable`, avec un log dédié hors `--quiet` (`"<ligne> : <instance> : filtre non satisfait, ignoré."`), mais **sans** qu'il s'agisse d'une erreur : la ligne continue normalement vers les instances suivantes. Contrairement à `disable`, cette décision dépend de `rawData` et ne peut donc jamais être connue avant l'exécution réelle de la ligne. Toute erreur interrompt la ligne et le script (§8). Succès complet → `SheetsWriter.closeRow` final, qui ouvre aussi la ligne suivante (`markInitialRow` fusionné dans le même appel) — "ligne suivante" désigne la prochaine ligne **éligible** de la liste déjà filtrée à l'étape 4, pas nécessairement `rowNumber + 1`. `processRow` retourne `{ success, outputs }` plutôt qu'un simple booléen — `outputs` (le `RowContext.outputs` de la ligne, y compris en cas d'échec en cours de route) alimente le rapport `--verbose` (étape 9), via `recordOutputs`, quelle que soit l'issue de la ligne.
 7. `--dry-run` : respecté individuellement par chaque module et `SheetsWriter`. Concrètement, chaque module (`gdocs`/`pdf`/`mail`) résout d'abord ses champs purs (nom de fichier, destinataires…, sans appel API), puis court-circuite avant tout appel Drive/Docs/Gmail réel si `dryRun` est actif, en écrivant une sortie synthétique (`url: '(dry-run)'`) via `SheetsWriter` — lui-même en écriture simulée (lectures réelles conservées).
 8. Logging de progression en temps réel (`loggedStep`, `pipeline/log.ts`) : actif par défaut, désactivable via `--quiet` (`deps.quiet`/`CliFlags.quiet`). Chaque appel réseau individuel (pas seulement les changements de ligne/instance) est enveloppé par `loggedStep`, qui logge `"<message>..."` juste avant l'appel puis une ligne `"→ OK"` (volontairement compacte, ne répète pas le message — voir v20) une fois résolu avec succès — aucun `"→ OK"` si l'appel échoue, ce qui situe déjà l'erreur avant même son message. `--quiet` ne change que cette verbosité de progression, jamais le comportement.
 9. `--verbose` (`CliFlags.verbose`, indépendant de `--quiet`) : après `printSummary` (succès ou échec), `printVerboseManifest(report, profile)` affiche le détail ligne par ligne de chaque sortie accumulée dans `report` (`ModuleReport`, `Map<string, Array<{ rowNumber, output }>>`, construit au fil des lignes par `recordOutputs`). Groupé par instance dans l'ordre du profil (`gdocs[]` puis `pdf[]` puis `mail[]`), instance omise si aucune entrée dans `report` (désactivée, ou jamais atteinte). `isMailOutput` (garde de type sur la présence de `to`) distingue le format de ligne gDocs/PDF (`<filename> : <url>`) du format Mail (`<to> - <subject> - <url>`).
@@ -475,10 +509,22 @@ Seuls les flags globaux (`sheetId`, `sheetTabName`, `autoCreateFolders`, `defaul
 ```ts
 import { readFileSync } from 'node:fs';
 
+const FilterConditionSchema = z.object({
+  label: z.string(),
+  criterium: z.enum(['equals']), // enum à un seul membre — extensible sans casser le format existant
+  value: z.string(),
+});
+
+const FilterSchema = z.object({
+  match: z.enum(['all', 'any', 'none']), // all = ET, any = OU, none = NI l'un ni l'autre
+  conditions: z.array(FilterConditionSchema).min(1),
+});
+
 const InstanceMetaSchema = z.object({
   name: z.string().max(80).optional(),
   description: z.string().max(500).optional(),
   disable: z.boolean().optional().default(false),
+  filter: FilterSchema.optional(), // exécution conditionnelle par ligne, évaluée sur rawData — voir filterEngine.ts
 });
 
 const FileModuleFieldsSchema = z.object({

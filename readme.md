@@ -117,6 +117,7 @@ Points clés :
 - `mail` : corps via **exactement une** des deux clés `template_html` (inline) ou `template_html_path` (fichier externe). `attach` (`all`/`generated`/`external`/`none`) détermine les pièces jointes ; `generated` référence uniquement des instances `pdf[]` (un gDoc ne s'attache pas — utiliser `{{link:gdocs[i]}}` dans le corps pour un lien de consultation).
 - `gdocs[0]`, `pdf[1]`, `mail[0]`... sont les identifiants techniques de position — stables, utilisés dans les erreurs, `generated`, `{{link:...}}`. La clé `name` (optionnelle) n'est qu'un affichage, jamais une référence.
 - `disable` (optionnel, tous types d'instance, défaut `false`) : désactive l'instance — ignorée à l'exécution, sans décaler les index des autres. Pratique pour désactiver temporairement un module en cours de configuration d'un profil. Une instance `mail[]` ne peut pas référencer (`generated`, `{{link:...}}`) une instance désactivée — erreur de configuration immédiate au chargement du profil, jamais au milieu d'une exécution.
+- `filter` (optionnel, tous types d'instance) : contrairement à `disable` (statique), exécute l'instance **seulement pour les lignes** dont les colonnes satisfont la condition configurée — voir exemple ci-dessous. Une instance filtrée pour une ligne donnée est simplement ignorée pour cette ligne, sans erreur.
 - `pdf[].output_filename` : l'extension `.pdf` est ajoutée automatiquement si absente (`CDDU {{Nom}}` devient `CDDU Dupont.pdf`) — insensible à la casse, jamais de doublon si `.pdf`/`.PDF` est déjà présent dans le nom résolu. Ne s'applique qu'au module `pdf` (un `gdocs[].output_filename` n'a pas d'extension à ajouter).
 - `template_link` (optionnel, `gdocs`/`pdf` uniquement, chaîne libre) : **purement décoratif, jamais lu par l'application** — un aide-mémoire pratique pour retrouver l'URL du template source directement depuis le profil, sans avoir à la reconstruire à partir du seul `template_id`. Absent de `mail` (son "template" est `template_html`/`template_html_path`, déjà dans le profil).
 
@@ -152,6 +153,29 @@ Points clés :
   ]
 }
 ```
+
+**Exécution conditionnelle par ligne (`filter`)** — l'instance `pdf[0]` n'est générée que pour les lignes où `Statut` vaut `Actif` **et** `Type` vaut `CDD` ; les autres lignes l'ignorent simplement (pas d'erreur) :
+
+```json
+{
+  "pdf": [
+    {
+      "template_id": "1TemplatePdfIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_folder_id": "1DriveFolderIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_filename": "CDDU {{Nom}} {{Prenom}}",
+      "filter": {
+        "match": "all",
+        "conditions": [
+          { "label": "Statut", "criterium": "equals", "value": "Actif" },
+          { "label": "Type", "criterium": "equals", "value": "CDD" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+`match` combine les conditions : `all` (toutes vraies), `any` (au moins une), `none` (aucune). Une instance `mail[]` qui référence (`generated`) une instance filtrée reçoit un message d'erreur explicite si le filtre n'a pas été satisfait pour la ligne en cours.
 
 **Email avec pièce jointe externe** (`attach: "external"`, un fichier déjà présent sur Drive, pas généré par ce profil) :
 

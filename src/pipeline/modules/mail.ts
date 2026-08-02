@@ -8,7 +8,7 @@ import type { RowContext, FileOutput, MailOutput } from '../rowContext.js';
 import { ModuleError } from '../rowContext.js';
 import type { MailInstance } from '../../config/schema.js';
 import { renderTemplateString } from '../../templateEngine.js';
-import { extractDriveFileId } from '../../utils.js';
+import { extractDriveFileId, resolveInstanceByRef } from '../../utils.js';
 import { resolveFolderPath } from '../../folderResolver.js';
 import type { PipelineDeps } from '../deps.js';
 import { loggedStep } from '../log.js';
@@ -97,7 +97,11 @@ async function resolveAttachments(
       ? config.generated.map((ref) => {
           const output = context.outputs[ref] as FileOutput | undefined;
           if (!output) {
-            throw new ModuleError(moduleName, `Référence "${ref}" introuvable dans les sorties générées.`);
+            const referenced = resolveInstanceByRef(ref, deps.profile);
+            const reason = referenced?.filter
+              ? ' Cette instance a un filtre configuré, qui n\'a peut-être pas été satisfait pour cette ligne.'
+              : '';
+            throw new ModuleError(moduleName, `Référence "${ref}" introuvable dans les sorties générées.${reason}`);
           }
           return { fileId: extractDriveFileId(output.url), filename: output.filename, mimeType: 'application/pdf' };
         })

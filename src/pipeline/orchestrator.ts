@@ -5,13 +5,14 @@ import { google, type sheets_v4 } from 'googleapis';
 import { authenticate } from '../auth.js';
 import { SheetsWriter } from '../sheetsWriter.js';
 import { extractDriveFileId } from '../utils.js';
-import type { Config } from '../config/schema.js';
+import type { Config, Filter } from '../config/schema.js';
 import { runGdocsInstance } from './modules/gdocs.js';
 import { runPdfInstance } from './modules/pdf.js';
 import { runMailInstance } from './modules/mail.js';
 import { ModuleError, type RowContext, type FileOutput, type MailOutput } from './rowContext.js';
 import type { PipelineDeps } from './deps.js';
 import { loggedStep } from './log.js';
+import { matchesFilter } from '../filterEngine.js';
 
 export type CliFlags = {
   dryRun: boolean;
@@ -192,19 +193,27 @@ export async function purgeRowOutputs(
   await sheetsWriter.resetOutputs(row.rowNumber);
 }
 
-function printSummary(processedRows: number, profile: Config, failure?: { rowNumber: number }): void {
-  const activeCount = <T extends { disable?: boolean }>(instances: T[]): number =>
-    instances.filter((instance) => !instance.disable).length;
-  const gdocsCount = activeCount(profile.gdocs);
-  const pdfCount = activeCount(profile.pdf);
-  const mailCount = activeCount(profile.mail);
+/** Nombre total d'entrées accumulées dans le rapport pour les instances "type[i]" (ex: préfixe "gdocs["). */
+function countByPrefix(report: ModuleReport, prefix: string): number {
+  let total = 0;
+  for (const [ref, entries] of report) {
+    if (ref.startsWith(prefix)) total += entries.length;
+  }
+  return total;
+}
+
+function printSummary(processedRows: number, profile: Config, report: ModuleReport, failure?: { rowNumber: number }): void {
+  const hasActive = <T extends { disable?: boolean }>(instances: T[]): boolean =>
+    instances.some((instance) => !instance.disable);
 
   console.log('');
   console.log('Résumé :');
   console.log(`  Lignes traitées avec succès : ${processedRows}`);
-  if (gdocsCount > 0) console.log(`  Documents gDocs générés : ${processedRows * gdocsCount}`);
-  if (pdfCount > 0) console.log(`  Fichiers PDF générés : ${processedRows * pdfCount}`);
-  if (mailCount > 0) console.log(`  Emails composés : ${processedRows * mailCount}`);
+  // Compté à partir de report (sorties réellement produites), pas processedRows × nombre d'instances actives :
+  // un `filter` peut faire qu'une instance active ne s'exécute pas sur toutes les lignes traitées.
+  if (hasActive(profile.gdocs)) console.log(`  Documents gDocs générés : ${countByPrefix(report, 'gdocs[')}`);
+  if (hasActive(profile.pdf)) console.log(`  Fichiers PDF générés : ${countByPrefix(report, 'pdf[')}`);
+  if (hasActive(profile.mail)) console.log(`  Emails composés : ${countByPrefix(report, 'mail[')}`);
   if (failure) console.log(`  Erreur sur la ligne ${failure.rowNumber} — script interrompu.`);
 }
 
@@ -272,24 +281,33 @@ export async function processRow(
   const context: RowContext = { rowNumber: row.rowNumber, rawData: row.rawData, outputs: {} };
   let currentModuleName = '';
 
+  const skipIfFiltered = (moduleName: string, instanceConfig: { filter?: Filter }): boolean => {
+    if (matchesFilter(moduleName, instanceConfig.filter, context.rawData)) return false;
+    if (!deps.quiet) console.log(`Ligne ${row.rowNumber} : ${moduleName} : filtre non satisfait, ignoré.`);
+    return true;
+  };
+
   try {
     for (const [index, instanceConfig] of profile.gdocs.entries()) {
-      if (instanceConfig.disable) continue;
       currentModuleName = `gdocs[${index}]`;
+      if (instanceConfig.disable) continue;
+      if (skipIfFiltered(currentModuleName, instanceConfig)) continue;
       await loggedStep(deps.quiet, `Ligne ${row.rowNumber} : ${currentModuleName}`, () =>
         runGdocsInstance(currentModuleName, instanceConfig, context, deps),
       );
     }
     for (const [index, instanceConfig] of profile.pdf.entries()) {
-      if (instanceConfig.disable) continue;
       currentModuleName = `pdf[${index}]`;
+      if (instanceConfig.disable) continue;
+      if (skipIfFiltered(currentModuleName, instanceConfig)) continue;
       await loggedStep(deps.quiet, `Ligne ${row.rowNumber} : ${currentModuleName}`, () =>
         runPdfInstance(currentModuleName, instanceConfig, context, deps),
       );
     }
     for (const [index, instanceConfig] of profile.mail.entries()) {
-      if (instanceConfig.disable) continue;
       currentModuleName = `mail[${index}]`;
+      if (instanceConfig.disable) continue;
+      if (skipIfFiltered(currentModuleName, instanceConfig)) continue;
       await loggedStep(deps.quiet, `Ligne ${row.rowNumber} : ${currentModuleName}`, () =>
         runMailInstance(currentModuleName, instanceConfig, context, deps),
       );
@@ -369,6 +387,7 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
     gmail,
     sheetsWriter,
     folderCache: new Map(),
+    profile,
     defaultDateFormat: profile.defaultDateFormat,
     autoCreateFolders: profile.autoCreateFolders,
     dryRun: cliFlags.dryRun,
@@ -385,14 +404,14 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
     const result = await processRow(row, profile, deps, nextRow?.rowNumber);
     recordOutputs(report, row.rowNumber, result.outputs);
     if (!result.success) {
-      printSummary(processedRows, profile, { rowNumber: row.rowNumber });
+      printSummary(processedRows, profile, report, { rowNumber: row.rowNumber });
       if (cliFlags.verbose) printVerboseManifest(report, profile);
       return 1;
     }
     processedRows++;
   }
 
-  printSummary(processedRows, profile);
+  printSummary(processedRows, profile, report);
   if (cliFlags.verbose) printVerboseManifest(report, profile);
   return 0;
 }

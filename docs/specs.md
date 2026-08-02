@@ -1,7 +1,9 @@
 # Spécifications Techniques & Fonctionnelles : "MMMerge"
 
-> **Dernière mise à jour :** 2026-08-01 — v18
-> **Résumé des derniers changements :** `mmmerge` fonctionne désormais depuis n'importe quel dossier une fois lié via `npm link` (`configs/`/`credentials.json`/`token.json` résolus depuis l'emplacement du script, plus depuis le dossier courant). La confirmation de succès du logging de progression (§5) devient une ligne compacte `→ OK` plutôt que la répétition du message complet. Voir architecture.md v20 pour le détail technique.
+> **Dernière mise à jour :** 2026-08-02 — v19
+> **Résumé des derniers changements :** Nouvelle clé `filter` (§3), commune à `gdocs`/`pdf`/`mail` : exécution conditionnelle **par ligne** (par opposition à `disable`, statique) — l'instance n'est exécutée pour une ligne donnée que si les valeurs de ses colonnes satisfont la condition configurée. Forme : `{ "match": "all" | "any" | "none", "conditions": [{ "label", "criterium": "equals", "value" }, ...] }` — comparaison stricte, sensible à la casse. Colonne référencée absente du Sheet → `Erreur` immédiate (même règle que pour une balise de template). Instance filtrée pour une ligne → simplement ignorée pour cette ligne (comme `disable`, mais décidé ligne par ligne, jamais une `Erreur`), journalisé hors `--quiet`. Le résumé de fin d'exécution (§5) compte désormais les sorties **réellement produites** plutôt que `lignes traitées × instances actives`, qui aurait surcompté dès qu'un filtre exclut une instance sur certaines lignes. Contrairement à `disable`, une référence `generated`/`{{link:...}}` vers une instance filtrée ne peut pas être détectée statiquement (la ligne n'est pas connue au chargement du profil) : si une instance Mail référence (`generated`) une instance PDF dont le filtre n'a pas été satisfait pour la ligne en cours, le message d'erreur le précise désormais explicitement plutôt que de laisser un simple "introuvable" sans piste. Voir architecture.md v21 pour le détail technique.
+>
+> **Résumé v18 (2026-08-01) :** `mmmerge` fonctionne désormais depuis n'importe quel dossier une fois lié via `npm link` (`configs/`/`credentials.json`/`token.json` résolus depuis l'emplacement du script, plus depuis le dossier courant). La confirmation de succès du logging de progression (§5) devient une ligne compacte `→ OK` plutôt que la répétition du message complet. Voir architecture.md v20 pour le détail technique.
 >
 > **Résumé v17 (2026-08-01) :** `--verbose` réintroduit (§5), avec un rôle entièrement différent de son ancien sens (v13, où il gouvernait le logging de progression — rôle repris par le fait que ce logging est désormais actif par défaut) : affiche en fin d'exécution le détail ligne par ligne de chaque document/email généré, groupé par instance. Indépendant de `--quiet`. `mmm_outputs.mail[i]` (§1) gagne un champ `to` (destinataire résolu), nécessaire pour ce détail. Voir architecture.md v19 pour le détail technique.
 >
@@ -117,6 +119,26 @@ Chaque instance (gDocs, PDF, ou Mail) accepte trois clés optionnelles :
 - `disable` (booléen, défaut `false`) : contrairement aux deux clés précédentes, **affecte le comportement**. Une instance désactivée n'est jamais exécutée pour aucune ligne — aucun appel Drive/Docs/Gmail, aucune entrée écrite dans `mmm_outputs`. Elle **conserve son identifiant de position** (désactiver `gdocs[0]` ne renomme pas `gdocs[1]` en `gdocs[0]`), pour ne jamais invalider silencieusement une référence `generated`/`{{link:...}}` ailleurs dans le profil. Objectif principal : pouvoir désactiver temporairement un module en cours de configuration d'un profil (ex: template pas encore prêt), sans avoir à le retirer et le rajouter au tableau.
   - Une instance `mail[]` référençant (`generated` ou `{{link:...}}`) une instance désactivée est une `Erreur` de **configuration**, levée au chargement du profil — jamais une erreur d'exécution au milieu d'une ligne. C'est une extension directe de la règle déjà existante pour une référence vers une instance inexistante (voir `{{link:...}}` ci-dessous) : `disable` étant un réglage fixe du profil (jamais dépendant d'une ligne du Sheet), la validité d'une référence vers une instance désactivée est toujours connue statiquement.
   - Si toutes les instances de tous les modules sont désactivées (ou si tous les tableaux sont simplement vides), chaque ligne éligible se termine en `Succès` sans qu'aucune sortie ne soit générée — comportement déjà existant pour un profil sans aucune instance configurée, `disable` n'étant qu'une seconde façon d'y arriver.
+
+### Exécution conditionnelle par ligne (`filter`) — communs à toutes les instances
+
+Une quatrième clé optionnelle, disponible sur `gdocs`/`pdf`/`mail` comme `disable` ci-dessus, mais avec une différence fondamentale : `disable` est un réglage **statique** du profil (jamais dépendant d'une ligne du Sheet), `filter` est évalué **pour chaque ligne**, à partir de ses propres valeurs de colonnes.
+
+```json
+"filter": {
+  "match": "all",
+  "conditions": [
+    { "label": "Statut", "criterium": "equals", "value": "Actif" },
+    { "label": "Type", "criterium": "equals", "value": "CDD" }
+  ]
+}
+```
+
+- `conditions` (tableau non vide) : chaque condition compare la valeur d'une colonne (`label`) à une valeur attendue (`value`) selon un `criterium` — pour l'instant, uniquement `equals` (comparaison stricte, sensible à la casse, sans normalisation des espaces).
+- `match` combine les résultats des conditions : `all` (toutes doivent être vraies — ET), `any` (au moins une — OU), `none` (aucune — NI l'une ni l'autre, négation de `any`). Ce seul combinateur, appliqué à des conditions atomiques d'égalité, couvre déjà "cette valeur parmi plusieurs" (`any` sur des conditions répétant le même `label`) et sa négation, sans qu'un opérateur de comparaison supplémentaire soit nécessaire au MVP.
+- Colonne référencée (`label`) absente du Sheet → `Erreur` immédiate (même règle que pour une balise de template référençant une colonne absente, voir ci-dessus) — jamais un simple "condition non satisfaite" silencieux, qui masquerait une faute de frappe dans le profil.
+- Une instance dont le `filter` n'est pas satisfait pour une ligne donnée est **ignorée pour cette ligne uniquement** (comme `disable`, sans erreur ni appel Drive/Docs/Gmail), mais reste normalement exécutée pour toute autre ligne qui satisfait la condition. Un avertissement est journalisé (hors `--quiet`).
+- Contrairement à `disable`, une référence `generated`/`{{link:...}}` vers une instance filtrée ne peut **jamais** être invalidée statiquement (validable par `--validate`) : la valeur des colonnes qui décide du filtre n'est connue qu'au moment de traiter une ligne réelle. Si une instance Mail référence (`generated`) une instance PDF dont le filtre n'a pas été satisfait pour la ligne en cours, l'erreur "référence introuvable" (voir §3, Mail, ci-dessous) précise explicitement que l'instance référencée a un filtre configuré — piste immédiate sans avoir à consulter le profil.
 
 ### gDocs (tableau d'instances)
 
@@ -255,7 +277,7 @@ Objectif : pouvoir déterminer précisément, à tout moment d'une exécution, c
 
 ### Résumé de fin d'exécution
 
-Hors `--validate`/`--list`, chaque exécution (y compris `--dry-run`) affiche un résumé : nombre de lignes traitées avec succès, nombre de documents gDocs/PDF générés et d'emails composés (calculés à partir du nombre d'instances **actives** configurées × lignes traitées — une instance `disable: true` n'entre pas dans ce calcul), et le numéro de la ligne en cause si le script s'est arrêté sur une `Erreur`.
+Hors `--validate`/`--list`, chaque exécution (y compris `--dry-run`) affiche un résumé : nombre de lignes traitées avec succès, nombre de documents gDocs/PDF générés et d'emails composés, et le numéro de la ligne en cause si le script s'est arrêté sur une `Erreur`. Le nombre de sorties par module compte les sorties **réellement produites** (une instance `disable: true`, ou dont le `filter` n'a été satisfait par aucune ligne traitée, n'en produit aucune) — pas simplement `lignes traitées × nombre d'instances actives`, qui surcompterait dès qu'un `filter` exclut une instance active sur au moins une ligne.
 
 ### Détail `--verbose`
 
@@ -288,7 +310,7 @@ Avant toute authentification ou lecture du Sheet, s'il existe au moins une insta
 
 - **Détection automatique des fichiers orphelins** en cas de crash technique non intercepté entre la création d'une instance et l'écriture incrémentale de `mmm_outputs` (la fenêtre d'exposition est réduite par l'écriture incrémentale, §2, mais pas éliminée).
 - **Nettoyage automatique des brouillons Gmail** de tentatives précédentes (§2, §3) — une ligne relancée plusieurs fois avec `draft_only: true` peut accumuler des brouillons, à supprimer manuellement si besoin.
-- **Filtre de condition par profil** : restreindre le traitement aux lignes respectant des conditions sur les colonnes du Sheet, appliqué *avant* toute écriture de statut. Non implémenté ; l'architecture doit prévoir son emplacement (avant la création du `RowContext`).
+- **Filtre au niveau de la ligne entière** (distinct de `filter` par instance, §3, implémenté) : restreindre le traitement de **toute la ligne** (avant même l'écriture du statut `En cours d'exécution`) selon des conditions sur ses colonnes — équivalent à un filtre d'éligibilité supplémentaire, en amont de `determineEligibleRows` (§2). Non implémenté ; `filter` par instance (§3) couvre le besoin le plus courant (sauter un document/email précis selon la ligne) sans modifier l'éligibilité de la ligne elle-même.
 - **Registre de types/formatteurs étendu** : au-delà de `string`/`date`/`number`/`euro` et de leurs modificateurs actuels. Également envisagé : déclarer des variables requises/typées au niveau du profil plutôt qu'inline.
 - **`processHidden`** : choisir explicitement de traiter ou d'ignorer les lignes masquées (actuellement toujours ignorées avec alerte).
 - **Export PDF direct** (sans passer par un Google Doc temporaire), à évaluer plus tard si l'API le permet.

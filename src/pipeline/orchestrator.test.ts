@@ -247,6 +247,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): {
     gmail: {} as PipelineDeps['gmail'],
     sheetsWriter,
     folderCache: new Map(),
+    profile: baseProfile(),
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
     dryRun: false,
@@ -309,6 +310,70 @@ describe('processRow', () => {
     expect(deps.drive.files.copy).toHaveBeenCalledTimes(1);
     expect(updateOutput).toHaveBeenCalledWith(5, 'gdocs[1]', expect.anything());
     expect(updateOutput).not.toHaveBeenCalledWith(5, 'gdocs[0]', expect.anything());
+  });
+
+  it('ignore une instance dont le filtre ne correspond pas à la ligne, sans échouer', async () => {
+    const { deps, updateOutput } = createDeps();
+    const profile = baseProfile({
+      gdocs: [
+        {
+          disable: false,
+          template_id: 'template-id',
+          output_folder_id: 'folder-id',
+          output_filename: 'Doc {{Nom}}',
+          filter: { match: 'all', conditions: [{ label: 'Nom', criterium: 'equals', value: 'Martin' }] },
+        },
+      ],
+    });
+
+    const { success } = await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
+
+    expect(success).toBe(true);
+    expect(deps.drive.files.copy).not.toHaveBeenCalled();
+    expect(updateOutput).not.toHaveBeenCalled();
+  });
+
+  it('exécute une instance dont le filtre correspond à la ligne', async () => {
+    const { deps, updateOutput } = createDeps();
+    const profile = baseProfile({
+      gdocs: [
+        {
+          disable: false,
+          template_id: 'template-id',
+          output_folder_id: 'folder-id',
+          output_filename: 'Doc {{Nom}}',
+          filter: { match: 'all', conditions: [{ label: 'Nom', criterium: 'equals', value: 'Dupont' }] },
+        },
+      ],
+    });
+
+    const { success } = await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
+
+    expect(success).toBe(true);
+    expect(deps.drive.files.copy).toHaveBeenCalledOnce();
+    expect(updateOutput).toHaveBeenCalledWith(5, 'gdocs[0]', expect.anything());
+  });
+
+  it('journalise "filtre non satisfait" quand une instance est ignorée (hors mode quiet)', async () => {
+    const { deps } = createDeps({ quiet: false });
+    const profile = baseProfile({
+      gdocs: [
+        {
+          disable: false,
+          template_id: 'template-id',
+          output_folder_id: 'folder-id',
+          output_filename: 'Doc {{Nom}}',
+          filter: { match: 'all', conditions: [{ label: 'Nom', criterium: 'equals', value: 'Martin' }] },
+        },
+      ],
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
+
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('Ligne 5 : gdocs[0] : filtre non satisfait, ignoré.');
+    logSpy.mockRestore();
   });
 });
 
@@ -451,6 +516,38 @@ describe('runPipeline (intégration)', () => {
     const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
     expect(logged).toContain('Lignes traitées avec succès : 2');
     expect(logged).toContain('Documents gDocs générés : 2');
+    logSpy.mockRestore();
+  });
+
+  it('le résumé ne compte que les sorties réellement générées quand un filtre écarte certaines lignes', async () => {
+    const { sheets } = createMockSheetsClient([
+      ['Dupont', '', '', ''],
+      ['Martin', '', '', ''],
+    ]);
+    const { drive } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const profile = baseProfile({
+      gdocs: [
+        {
+          disable: false,
+          template_id: 'template-id',
+          output_folder_id: 'folder-id',
+          output_filename: 'Doc {{Nom}}',
+          filter: { match: 'all', conditions: [{ label: 'Nom', criterium: 'equals', value: 'Dupont' }] },
+        },
+      ],
+    });
+
+    const code = await runPipeline(profile, baseCliFlags());
+
+    expect(code).toBe(0);
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('Lignes traitées avec succès : 2'); // les 2 lignes réussissent, filtrées ou non
+    expect(logged).toContain('Documents gDocs générés : 1'); // seule la ligne "Dupont" satisfait le filtre
     logSpy.mockRestore();
   });
 

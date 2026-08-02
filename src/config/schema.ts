@@ -5,11 +5,29 @@
 import { z } from 'zod';
 import { readFileSync } from 'node:fs';
 
+const FilterConditionSchema = z.object({
+  label: z.string(),
+  /** Enum à un seul membre pour l'instant — extensible (contains, not_equals...) sans casser le format existant. */
+  criterium: z.enum(['equals']),
+  value: z.string(),
+});
+
+const FilterSchema = z.object({
+  /** all = ET, any = OU, none = NI l'un ni l'autre (négation de "any"). */
+  match: z.enum(['all', 'any', 'none']),
+  conditions: z.array(FilterConditionSchema).min(1),
+});
+
+export type FilterCondition = z.infer<typeof FilterConditionSchema>;
+export type Filter = z.infer<typeof FilterSchema>;
+
 const InstanceMetaSchema = z.object({
   name: z.string().max(80).optional(),
   description: z.string().max(500).optional(),
   /** Désactive l'instance : ignorée à l'exécution, jamais appelée ni référencée (voir superRefine ci-dessous). */
   disable: z.boolean().optional().default(false),
+  /** Exécution conditionnelle par ligne, évaluée sur rawData — voir filterEngine.ts. */
+  filter: FilterSchema.optional(),
 });
 
 const FileModuleFieldsSchema = z

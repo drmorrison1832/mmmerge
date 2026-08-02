@@ -26,6 +26,9 @@ describe('loadConfig', () => {
     removeFixture('__test-disable-generated');
     removeFixture('__test-disable-link');
     removeFixture('__test-template-link');
+    removeFixture('__test-filter-valide');
+    removeFixture('__test-filter-match-invalide');
+    removeFixture('__test-filter-conditions-vide');
   });
 
   it('charge le profil "exemple" et applique les valeurs par défaut absentes du fichier', () => {
@@ -138,5 +141,67 @@ describe('loadConfig', () => {
     const config = loadConfig('__test-template-link', []);
     expect(config.gdocs[0].template_link).toBe('https://docs.google.com/document/d/t/edit');
     expect(config.pdf[0].template_link).toBeUndefined();
+  });
+
+  it('"filter" (multi-conditions, match "all") est accepté et chargé tel quel', () => {
+    writeFixture(
+      '__test-filter-valide',
+      JSON.stringify({
+        ...baseProfileFields(),
+        gdocs: [
+          {
+            template_id: 't',
+            output_folder_id: 'f',
+            output_filename: 'n',
+            filter: {
+              match: 'all',
+              conditions: [
+                { label: 'Statut', criterium: 'equals', value: 'Actif' },
+                { label: 'Type', criterium: 'equals', value: 'CDD' },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const config = loadConfig('__test-filter-valide', []);
+    expect(config.gdocs[0].filter).toEqual({
+      match: 'all',
+      conditions: [
+        { label: 'Statut', criterium: 'equals', value: 'Actif' },
+        { label: 'Type', criterium: 'equals', value: 'CDD' },
+      ],
+    });
+  });
+
+  it('"filter.match" doit être "all", "any" ou "none" — une valeur arbitraire est rejetée', () => {
+    writeFixture(
+      '__test-filter-match-invalide',
+      JSON.stringify({
+        ...baseProfileFields(),
+        gdocs: [
+          {
+            template_id: 't',
+            output_folder_id: 'f',
+            output_filename: 'n',
+            filter: { match: 'quelconque', conditions: [{ label: 'Statut', criterium: 'equals', value: 'Actif' }] },
+          },
+        ],
+      }),
+    );
+    expect(() => loadConfig('__test-filter-match-invalide', [])).toThrow(/match/);
+  });
+
+  it('"filter.conditions" ne peut pas être vide (au moins une condition requise)', () => {
+    writeFixture(
+      '__test-filter-conditions-vide',
+      JSON.stringify({
+        ...baseProfileFields(),
+        gdocs: [
+          { template_id: 't', output_folder_id: 'f', output_filename: 'n', filter: { match: 'all', conditions: [] } },
+        ],
+      }),
+    );
+    expect(() => loadConfig('__test-filter-conditions-vide', [])).toThrow(/conditions/);
   });
 });
