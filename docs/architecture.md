@@ -1,7 +1,9 @@
 # Architecture Technique : "MMMerge"
 
-> **Dernière mise à jour :** 2026-08-02 — v25
-> **Résumé des derniers changements :** Nouveau champ `link_column: z.boolean().optional().default(false)` sur `FileModuleFieldsSchema` (donc `gdocs`/`pdf`) et sur `MailInstanceSchema` — pas sur `InstanceMetaSchema` (partagé avec `columns[]`, qui n'a pas de sortie de type "lien", donc pas de champ pertinent à y ajouter). Dans `gdocs.ts`/`pdf.ts`/`mail.ts` : nouvelle fonction privée par fichier `writeLinkColumn(moduleName, config, rowNumber, url, deps)` — no-op si `config.link_column` est faux, sinon `deps.sheetsWriter.writeColumn(rowNumber, \`${moduleName} output\`, url)` (réutilise tel quel `writeColumn`/`resolveOrCreateColumn` de v23, aucun changement à `sheetsWriter.ts`). Appelée juste après chaque `updateOutput` existant — dans la branche `--dry-run` (avec l'URL synthétique `(dry-run)`) et dans le chemin réel de chacun des trois modules, deux points d'appel par fichier. Nom de colonne dérivé de `moduleName` (l'identifiant technique, ex: `gdocs[0]`), jamais de `config.name` : consciemment écarté en conception — `name` est documenté (specs.md §3) comme n'affectant jamais aucune référence technique, un renommage doit rester sans effet de bord ; le dériver aurait fait apparaître une nouvelle colonne et abandonné l'ancienne (orpheline) à chaque renommage, puisque mmmerge ne supprime jamais de colonne.
+> **Dernière mise à jour :** 2026-08-05 — v26
+> **Résumé des derniers changements :** `link_column` (v25) passe de `z.boolean().optional().default(false)` à `z.string().optional()`, sur `FileModuleFieldsSchema` et `MailInstanceSchema` — l'utilisateur fournit désormais directement le nom de colonne, plus de nom auto-dérivé de `moduleName`. `gdocs.ts`/`pdf.ts`/`mail.ts` : `writeLinkColumn` perd son paramètre `moduleName` (devenu inutile) — signature `writeLinkColumn(config, rowNumber, url, deps)` ; corps simplifié à `if (!config.link_column) return; await deps.sheetsWriter.writeColumn(rowNumber, config.link_column, url);`, `config.link_column` étant désormais lui-même le nom de colonne (plus de template literal `` `${moduleName} output` ``). `config/schema.ts` : la garde statique "colonne système réservée" (jusqu'ici seulement sur `columns[].output_column`) est généralisée dans le même `superRefine` — parcourt `gdocs`/`pdf`/`mail` et signale `<array>[<index>].link_column` si sa valeur (quand définie) fait partie de `RESERVED_COLUMN_NAMES`. Aucun changement à `sheetsWriter.ts` (`writeColumn`/`resolveOrCreateColumn` déjà génériques depuis v23). Remplace v25 avant toute adoption réelle (champ ajouté le même cycle de travail) — pas de migration nécessaire pour un profil existant.
+>
+> **Résumé v25 (2026-08-02) :** Nouveau champ `link_column: z.boolean().optional().default(false)` sur `FileModuleFieldsSchema` (donc `gdocs`/`pdf`) et sur `MailInstanceSchema` — pas sur `InstanceMetaSchema` (partagé avec `columns[]`, qui n'a pas de sortie de type "lien", donc pas de champ pertinent à y ajouter). Dans `gdocs.ts`/`pdf.ts`/`mail.ts` : nouvelle fonction privée par fichier `writeLinkColumn(moduleName, config, rowNumber, url, deps)` — no-op si `config.link_column` est faux, sinon `deps.sheetsWriter.writeColumn(rowNumber, \`${moduleName} output\`, url)` (réutilise tel quel `writeColumn`/`resolveOrCreateColumn` de v23, aucun changement à `sheetsWriter.ts`). Appelée juste après chaque `updateOutput` existant — dans la branche `--dry-run` (avec l'URL synthétique `(dry-run)`) et dans le chemin réel de chacun des trois modules, deux points d'appel par fichier. Nom de colonne dérivé de `moduleName` (l'identifiant technique, ex: `gdocs[0]`), jamais de `config.name` : consciemment écarté en conception — `name` est documenté (specs.md §3) comme n'affectant jamais aucune référence technique, un renommage doit rester sans effet de bord ; le dériver aurait fait apparaître une nouvelle colonne et abandonné l'ancienne (orpheline) à chaque renommage, puisque mmmerge ne supprime jamais de colonne.
 >
 > **Résumé v24 (2026-08-02) :** Correction d'un bug de perte de données dans `purgeRowOutputs` (§3, `orchestrator.ts`) : la fonction ne recevait ni le profil ni assez de contexte pour savoir qu'une instance `gdocs[i]`/`pdf[i]` référencée dans `mmm_outputs` ne allait *pas* s'exécuter cette ligne (`disable: true`, ou `filter` non satisfait) — elle mettait donc son fichier à la corbeille et perdait sa trace dans `mmm_outputs` sans jamais le régénérer. Signature changée : `purgeRowOutputs(drive, sheetsWriter, row, profile, quiet = true)` (nouveau paramètre `profile`, avant `quiet`). Nouvelle logique, par entrée `mmm_outputs` : `resolveInstanceByRef(key, profile)` retrouve la config actuelle ; si l'instance est introuvable (retirée du profil) → orpheline, purgée normalement (comportement historique inchangé) ; si trouvée et `!instance.disable && matchesFilter(key, instance.filter, row.rawData)` → elle va se régénérer cette ligne, purge normale (fichier remplacé juste après) ; sinon (désactivée, ou filtre non satisfait) → **ni purgée, ni perdue**, l'entrée est recopiée telle quelle dans un objet `preserved` qui devient le nouveau contenu de `mmm_outputs`. `matchesFilter` est appelé dans un `try/catch` local : si l'évaluation échoue (ex: colonne référencée absente du Sheet), la purge ne plante pas et préserve par sécurité — la même erreur de configuration réapparaît normalement via `skipIfFiltered` une fois l'exécution de la ligne arrivée à cette instance (qui, elle, est dans le `try` principal de `processRow` et gère déjà `ModuleError` correctement). `sheetsWriter.ts` : `resetOutputs(rowNumber, preserved: Record<string, FileOutput | MailOutput> = {})` — écrit désormais `JSON.stringify(preserved)` au lieu du littéral `'{}'` codé en dur ; défaut `{}` gardé pour la compatibilité des appelants/tests existants qui n'ont rien à préserver. `mail[i]` suit la même règle par cohérence (jamais purgé physiquement, comme avant, mais son entrée ne disparaît plus non plus de `mmm_outputs` si désactivée/filtrée cette ligne) — avant ce correctif, `resetOutputs(rowNumber)` réinitialisait *tout* `mmm_outputs` à `{}` sans condition, donc une instance mail désactivée/filtrée perdait aussi silencieusement sa référence, invisible jusqu'ici puisque mail s'exécutait toujours avant l'introduction de `disable`/`filter`.
 >
@@ -609,7 +611,7 @@ const FileModuleFieldsSchema = z.object({
   output_folder: z.string().optional(),
   output_folder_id: z.string().optional(),
   output_filename: z.string(),
-  link_column: z.boolean().optional().default(false), // écrit l'URL de sortie dans "<id> output" — voir writeLinkColumn
+  link_column: z.string().optional(), // nom de colonne choisi par l'utilisateur — voir writeLinkColumn
 }).merge(InstanceMetaSchema);
 
 const outputFolderXorRefine = (i: { output_folder?: string; output_folder_id?: string }) =>
@@ -641,7 +643,7 @@ const MailInstanceSchema = z.object({
   generated: z.array(z.string()).optional().default([]),
   externalFolder: z.string().optional(),
   external: z.array(z.string()).optional().default([]),
-  link_column: z.boolean().optional().default(false),
+  link_column: z.string().optional(),
 }).merge(InstanceMetaSchema).refine(
   (mail) => Boolean(mail.template_html) !== Boolean(mail.template_html_path),
   { message: 'Exactement une des deux clés template_html / template_html_path doit être fournie.' }
@@ -677,6 +679,15 @@ const ProfileSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `columns[${columnsIndex}].output_column : "${columnsInstance.output_column}" est une colonne système réservée.` });
     }
   });
+
+  // Même garde pour link_column (gdocs/pdf/mail) — généralisée en v26, seul output_column (columns[]) était couvert jusqu'ici.
+  for (const [arrayName, instances] of [['gdocs', config.gdocs], ['pdf', config.pdf], ['mail', config.mail]] as const) {
+    instances.forEach((instance, index) => {
+      if (instance.link_column && (RESERVED_COLUMN_NAMES as readonly string[]).includes(instance.link_column)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${arrayName}[${index}].link_column : "${instance.link_column}" est une colonne système réservée.` });
+      }
+    });
+  }
 
   const pdfRefs = new Set(config.pdf.map((_, i) => `pdf[${i}]`));
   const linkableRefs = new Set([

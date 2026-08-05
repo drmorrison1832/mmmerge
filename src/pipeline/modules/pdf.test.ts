@@ -56,7 +56,6 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): {
 function baseConfig(overrides: Partial<PdfInstance> = {}): PdfInstance {
   return {
     disable: false,
-    link_column: false,
     template_id: 'template-id',
     output_folder_id: 'folder-id',
     output_filename: 'CDDU {{Nom}}',
@@ -182,19 +181,19 @@ describe('runPdfInstance', () => {
     expect(writeColumn).not.toHaveBeenCalled();
   });
 
-  it('écrit l\'URL de sortie dans "<id> output" quand link_column est activé', async () => {
+  it("écrit l'URL de sortie dans la colonne nommée par link_column", async () => {
     const { deps, writeColumn } = createDeps();
 
-    await runPdfInstance('pdf[0]', baseConfig({ link_column: true }), baseContext(), deps);
+    await runPdfInstance('pdf[0]', baseConfig({ link_column: 'Lien contrat' }), baseContext(), deps);
 
-    expect(writeColumn).toHaveBeenCalledWith(5, 'pdf[0] output', 'https://drive.google.com/file/d/final-pdf-id/view');
+    expect(writeColumn).toHaveBeenCalledWith(5, 'Lien contrat', 'https://drive.google.com/file/d/final-pdf-id/view');
   });
 
   it('écrit aussi la colonne en mode dry-run (URL synthétique)', async () => {
     const { deps, writeColumn } = createDeps({ dryRun: true });
 
-    await runPdfInstance('pdf[0]', baseConfig({ link_column: true }), baseContext(), deps);
+    await runPdfInstance('pdf[0]', baseConfig({ link_column: 'Lien contrat' }), baseContext(), deps);
 
-    expect(writeColumn).toHaveBeenCalledWith(5, 'pdf[0] output', '(dry-run)');
+    expect(writeColumn).toHaveBeenCalledWith(5, 'Lien contrat', '(dry-run)');
   });
 });

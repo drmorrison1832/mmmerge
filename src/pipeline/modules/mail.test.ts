@@ -71,7 +71,6 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): {
 function baseConfig(overrides: Partial<MailInstance> = {}): MailInstance {
   return {
     disable: false,
-    link_column: false,
     to: '{{Email}}',
     cc: [],
     subject: 'Votre contrat',
@@ -173,7 +172,6 @@ describe('runMailInstance', () => {
         pdf: [
           {
             disable: false,
-            link_column: false,
             template_id: 't',
             output_folder_id: 'f',
             output_filename: 'n',
@@ -332,20 +330,20 @@ describe('runMailInstance', () => {
     expect(writeColumn).not.toHaveBeenCalled();
   });
 
-  it('écrit l\'URL de sortie dans "<id> output" quand link_column est activé', async () => {
+  it("écrit l'URL de sortie dans la colonne nommée par link_column", async () => {
     const { gmail } = createMockGmail();
     const { deps, writeColumn } = createDeps({ gmail });
 
-    await runMailInstance('mail[0]', baseConfig({ link_column: true }), baseContext(), deps);
+    await runMailInstance('mail[0]', baseConfig({ link_column: 'Lien mail' }), baseContext(), deps);
 
-    expect(writeColumn).toHaveBeenCalledWith(5, 'mail[0] output', 'https://mail.google.com/mail/u/0/#drafts?compose=draft-message-id');
+    expect(writeColumn).toHaveBeenCalledWith(5, 'Lien mail', 'https://mail.google.com/mail/u/0/#drafts?compose=draft-message-id');
   });
 
   it('écrit aussi la colonne en mode dry-run (URL synthétique)', async () => {
     const { deps, writeColumn } = createDeps({ dryRun: true });
 
-    await runMailInstance('mail[0]', baseConfig({ link_column: true }), baseContext(), deps);
+    await runMailInstance('mail[0]', baseConfig({ link_column: 'Lien mail' }), baseContext(), deps);
 
-    expect(writeColumn).toHaveBeenCalledWith(5, 'mail[0] output', '(dry-run)');
+    expect(writeColumn).toHaveBeenCalledWith(5, 'Lien mail', '(dry-run)');
   });
 });

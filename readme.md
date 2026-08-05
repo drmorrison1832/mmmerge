@@ -128,7 +128,7 @@ Points clés :
 - `filter` (optionnel, tous types d'instance) : contrairement à `disable` (statique), exécute l'instance **seulement pour les lignes** dont les colonnes satisfont la condition configurée — voir exemple ci-dessous. Une instance filtrée pour une ligne donnée est simplement ignorée pour cette ligne, sans erreur.
 - `pdf[].output_filename` : l'extension `.pdf` est ajoutée automatiquement si absente (`CDDU {{Nom}}` devient `CDDU Dupont.pdf`) — insensible à la casse, jamais de doublon si `.pdf`/`.PDF` est déjà présent dans le nom résolu. Ne s'applique qu'au module `pdf` (un `gdocs[].output_filename` n'a pas d'extension à ajouter).
 - `template_link` (optionnel, `gdocs`/`pdf` uniquement, chaîne libre) : **purement décoratif, jamais lu par l'application** — un aide-mémoire pratique pour retrouver l'URL du template source directement depuis le profil, sans avoir à la reconstruire à partir du seul `template_id`. Absent de `mail` (son "template" est `template_html`/`template_html_path`, déjà dans le profil).
-- `link_column` (optionnel, `gdocs`/`pdf`/`mail`, booléen, défaut `false`) : en plus de `mmm_outputs`, écrit l'URL de sortie de l'instance dans une colonne dédiée du Sheet — nommée automatiquement `"<identifiant technique> output"` (ex: `"pdf[0] output"`), créée si elle n'existe pas encore. Le nom n'est **jamais** dérivé de `name` : `name` reste purement cosmétique partout ailleurs dans l'outil (renommer une instance ne doit rien casser), donc le baser sur une colonne persistée l'aurait rendu silencieusement significatif.
+- `link_column` (optionnel, `gdocs`/`pdf`/`mail`, chaîne — nom de colonne) : en plus de `mmm_outputs`, écrit l'URL de sortie de l'instance dans la colonne du Sheet nommée par cette clé, créée si elle n'existe pas encore. Absent → rien n'est écrit. Le nom est choisi par l'utilisateur (comme `columns[].output_column`) — jamais dérivé de `name`, qui reste purement cosmétique partout ailleurs dans l'outil.
 
 ### Autres exemples de profils
 
@@ -208,7 +208,7 @@ Points clés :
 
 Si `NomComplet` n'existe pas déjà comme colonne du Sheet, elle est créée automatiquement (ajoutée en fin d'en-tête) — aucun flag à activer. `columns[]` s'exécute toujours en premier, avant `gdocs`/`pdf`/`mail`.
 
-**Lien de sortie visible directement dans le Sheet (`link_column`)** — l'URL du PDF généré est écrite dans une colonne `"pdf[0] output"` (créée automatiquement), en plus de `mmm_outputs` :
+**Lien de sortie visible directement dans le Sheet (`link_column`)** — l'URL du PDF généré est écrite dans la colonne `"Lien contrat"` (créée automatiquement si absente), en plus de `mmm_outputs` :
 
 ```json
 {
@@ -217,7 +217,7 @@ Si `NomComplet` n'existe pas déjà comme colonne du Sheet, elle est créée aut
       "template_id": "1TemplatePdfIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
       "output_folder_id": "1DriveFolderIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
       "output_filename": "CDDU {{Nom}} {{Prenom}}",
-      "link_column": true
+      "link_column": "Lien contrat"
     }
   ]
 }

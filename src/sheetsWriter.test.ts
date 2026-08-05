@@ -187,7 +187,7 @@ const baseProfile: Config = {
   autoCreateFolders: true,
   defaultDateFormat: 'd/M/yyyy',
   gdocs: [],
-  pdf: [{ disable: false, link_column: false, template_id: 't', output_folder: 'f', output_filename: 'n', name: 'Copie archives' }],
+  pdf: [{ disable: false, template_id: 't', output_folder: 'f', output_filename: 'n', name: 'Copie archives' }],
   mail: [],
   columns: [],
 };
@@ -216,7 +216,7 @@ describe('closeRow', () => {
   it('omet le nom entre parenthèses si l\'instance n\'a pas de name', async () => {
     const { writer, cells } = await createWriter();
     const context = { rowNumber: 5, rawData: {}, outputs: {}, error: { module: 'gdocs[0]', message: 'boom' } };
-    await writer.closeRow(context, { ...baseProfile, gdocs: [{ disable: false, link_column: false, template_id: 't', output_folder: 'f', output_filename: 'n' }] });
+    await writer.closeRow(context, { ...baseProfile, gdocs: [{ disable: false, template_id: 't', output_folder: 'f', output_filename: 'n' }] });
 
     expect(cells.get(`${SHEET_TAB}!B5`)).toEqual([['Erreur: gdocs[0] - boom']]);
   });

@@ -48,8 +48,8 @@ const FileModuleFieldsSchema = z
     output_folder: z.string().optional(),
     output_folder_id: z.string().optional(),
     output_filename: z.string(),
-    /** Écrit l'URL de sortie dans une colonne "<identifiant technique> output", créée si absente. */
-    link_column: z.boolean().optional().default(false),
+    /** Écrit l'URL de sortie dans cette colonne (créée si absente) — nom choisi par l'utilisateur. */
+    link_column: z.string().optional(),
   })
   .merge(InstanceMetaSchema);
 
@@ -99,8 +99,8 @@ export const MailInstanceSchema = z
     generated: z.array(z.string()).optional().default([]),
     externalFolder: z.string().optional(),
     external: z.array(z.string()).optional().default([]),
-    /** Écrit l'URL de sortie dans une colonne "<identifiant technique> output", créée si absente. */
-    link_column: z.boolean().optional().default(false),
+    /** Écrit l'URL de sortie dans cette colonne (créée si absente) — nom choisi par l'utilisateur. */
+    link_column: z.string().optional(),
   })
   .merge(InstanceMetaSchema)
   .refine((mail) => Boolean(mail.template_html) !== Boolean(mail.template_html_path), {
@@ -142,6 +142,22 @@ export const ProfileSchema = z
         });
       }
     });
+
+    const linkColumnGroups: Array<[string, Array<{ link_column?: string }>]> = [
+      ['gdocs', config.gdocs],
+      ['pdf', config.pdf],
+      ['mail', config.mail],
+    ];
+    for (const [arrayName, instances] of linkColumnGroups) {
+      instances.forEach((instance, index) => {
+        if (instance.link_column && (RESERVED_COLUMN_NAMES as readonly string[]).includes(instance.link_column)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${arrayName}[${index}].link_column : "${instance.link_column}" est une colonne système réservée.`,
+          });
+        }
+      });
+    }
 
     const pdfRefs = new Set(config.pdf.map((_, i) => `pdf[${i}]`));
     const linkableRefs = new Set([

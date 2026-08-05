@@ -50,7 +50,6 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): {
 function baseConfig(overrides: Partial<GdocsInstance> = {}): GdocsInstance {
   return {
     disable: false,
-    link_column: false,
     template_id: 'template-id',
     output_folder_id: 'folder-id',
     output_filename: 'CDDU {{Nom}}',
@@ -157,19 +156,19 @@ describe('runGdocsInstance', () => {
     expect(writeColumn).not.toHaveBeenCalled();
   });
 
-  it('écrit l\'URL de sortie dans "<id> output" quand link_column est activé', async () => {
+  it("écrit l'URL de sortie dans la colonne nommée par link_column", async () => {
     const { deps, writeColumn } = createDeps();
 
-    await runGdocsInstance('gdocs[0]', baseConfig({ link_column: true }), baseContext(), deps);
+    await runGdocsInstance('gdocs[0]', baseConfig({ link_column: 'Lien contrat' }), baseContext(), deps);
 
-    expect(writeColumn).toHaveBeenCalledWith(5, 'gdocs[0] output', 'https://docs.google.com/document/d/new-doc-id/edit');
+    expect(writeColumn).toHaveBeenCalledWith(5, 'Lien contrat', 'https://docs.google.com/document/d/new-doc-id/edit');
   });
 
   it('écrit aussi la colonne en mode dry-run (URL synthétique)', async () => {
     const { deps, writeColumn } = createDeps({ dryRun: true });
 
-    await runGdocsInstance('gdocs[0]', baseConfig({ link_column: true }), baseContext(), deps);
+    await runGdocsInstance('gdocs[0]', baseConfig({ link_column: 'Lien contrat' }), baseContext(), deps);
 
-    expect(writeColumn).toHaveBeenCalledWith(5, 'gdocs[0] output', '(dry-run)');
+    expect(writeColumn).toHaveBeenCalledWith(5, 'Lien contrat', '(dry-run)');
   });
 });
