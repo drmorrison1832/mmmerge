@@ -25,6 +25,30 @@ describe('parseLines', () => {
   it('lève une erreur explicite sur une valeur inférieure à 1', () => {
     expect(() => parseLines('0')).toThrow(/valeur invalide/);
   });
+
+  it('développe une plage "début-fin" en numéros individuels', () => {
+    expect(parseLines('4-6')).toEqual([4, 5, 6]);
+  });
+
+  it('combine plages et valeurs individuelles', () => {
+    expect(parseLines('2,4-6,9')).toEqual([2, 4, 5, 6, 9]);
+  });
+
+  it('accepte une plage à un seul élément (début = fin)', () => {
+    expect(parseLines('4-4')).toEqual([4]);
+  });
+
+  it('tolère les espaces autour des plages', () => {
+    expect(parseLines('2, 4-6 , 9')).toEqual([2, 4, 5, 6, 9]);
+  });
+
+  it('lève une erreur explicite si la plage est inversée (fin < début)', () => {
+    expect(() => parseLines('6-4')).toThrow(/plage invalide/);
+  });
+
+  it('lève une erreur explicite sur une plage mal formée', () => {
+    expect(() => parseLines('4-6-8')).toThrow(/valeur invalide/);
+  });
 });
 
 describe('HELP_TEMPLATES', () => {

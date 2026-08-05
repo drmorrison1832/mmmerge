@@ -333,7 +333,7 @@ node dist/cli.js <profil> [options]
 | Flag | Effet |
 |---|---|
 | `--dry-run` | Simule (console uniquement) — aucune écriture Sheets/Drive/Gmail. |
-| `--lines=4,14,15` | Restreint le traitement à ces numéros de ligne (numérotation visuelle Sheets). Ligne hors tableau → erreur. |
+| `--lines=4,14,15` | Restreint le traitement à ces numéros de ligne (numérotation visuelle Sheets). Accepte aussi des plages (`--lines=2,4-6,9` → 2, 4, 5, 6, 9). Ligne hors tableau, ou plage inversée (`6-4`) → erreur. |
 | `--force` | Ignore le filtre de statut : retraite les lignes ciblées quel que soit leur `mmm_status`. |
 | `--validate` | Vérifie la config, l'accessibilité du Sheet et des `template_id`/`output_folder_id` — sans lire de ligne de données ni lancer le pipeline. |
 | `--init-columns` | Crée les colonnes système `mmm_*` manquantes au lieu d'échouer. |

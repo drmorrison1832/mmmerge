@@ -88,18 +88,30 @@ Exemple (champs optionnels sans espaces doubles) :
   avec prenom2 vide → Étienne Paul Dupont (pas "Étienne  Paul Dupont")
 `;
 
+function parseLinesPart(part: string): number[] {
+  const rangeMatch = part.match(/^(\d+)-(\d+)$/);
+  if (rangeMatch) {
+    const start = Number(rangeMatch[1]);
+    const end = Number(rangeMatch[2]);
+    if (start < 1 || end < start) {
+      throw new Error(`--lines : plage invalide "${part}" (le début doit être ≥ 1 et inférieur ou égal à la fin).`);
+    }
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  }
+
+  const n = Number(part);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(
+      `--lines : valeur invalide "${part}" (attendu un numéro de ligne entier, ou une plage "début-fin", séparés par des virgules).`,
+    );
+  }
+  return [n];
+}
+
 export function parseLines(raw: unknown): number[] | undefined {
   if (raw === undefined) return undefined;
   return String(raw)
     .split(',')
     .map((part) => part.trim())
-    .map((part) => {
-      const n = Number(part);
-      if (!Number.isInteger(n) || n < 1) {
-        throw new Error(
-          `--lines : valeur invalide "${part}" (attendu des numéros de ligne entiers, séparés par des virgules).`,
-        );
-      }
-      return n;
-    });
+    .flatMap(parseLinesPart);
 }
