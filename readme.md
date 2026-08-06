@@ -69,7 +69,7 @@ La ligne **1** est l'en-tête ; la première ligne de données possible est la l
 
 ## Configurer un profil
 
-Chaque profil est un fichier JSON dans `configs/<nom-du-profil>.json`. Exemple complet (voir aussi `configs/multiModuleExemple.json`, qui combine les cinq modules — utilisé par les tests) :
+Chaque profil est un fichier JSON dans `configs/<nom-du-profil>.json` (sous-dossiers autorisés — voir `configs/exemples/`, § ci-dessous). Exemple complet (voir aussi `configs/exemples/multiModuleExemple.json`, qui combine les cinq modules — utilisé par les tests) :
 
 ```json
 {
@@ -290,9 +290,9 @@ Pour la ligne dont `Matricule` vaut `M-001`, les colonnes `Statut` et `Type` du 
 
 Détail complet du format (schéma Zod, toutes les clés, règles de validation) : `docs/specs.md` (comportement) et `docs/architecture.md` (technique).
 
-### Profils d'exemple prêts à l'emploi (`configs/`)
+### Profils d'exemple prêts à l'emploi (`configs/exemples/`)
 
-En plus des extraits ci-dessus, chaque module a son propre profil d'exemple complet dans `configs/` — une version `Basic` (une seule instance, clés minimales) et une version `Advanced` (plusieurs instances, la plupart des clés optionnelles) :
+En plus des extraits ci-dessus, chaque module a son propre profil d'exemple complet dans `configs/exemples/` — une version `Basic` (une seule instance, clés minimales) et une version `Advanced` (plusieurs instances, la plupart des clés optionnelles). Ces fichiers sont là à but purement documentaire (illustrer chaque clé du schéma), pas pour être exécutés tels quels :
 
 | Module | Basic | Advanced |
 |---|---|---|
@@ -302,7 +302,9 @@ En plus des extraits ci-dessus, chaque module a son propre profil d'exemple comp
 | Columns | `columnsExempleBasic.json` | `columnsExempleAdvanced.json` |
 | Json2Columns | `json2columnsExempleBasic.json` | `json2columnsExempleAdvanced.json` |
 
-Ces profils ciblent volontairement un seul module chacun ; les fonctionnalités qui traversent plusieurs modules (`attach: "generated"`, `{{link:...}}`) n'y apparaissent donc pas — voir `multiModuleExemple.json` (§ ci-dessus) pour un profil complet où les cinq modules collaborent sur la même ligne. Tous ces profils chargent sans erreur (vérifié par `src/config/exampleProfiles.test.ts`) mais utilisent des identifiants Drive/Sheet factices — pas destinés à être exécutés tels quels contre un vrai Sheet.
+Ces profils ciblent volontairement un seul module chacun ; les fonctionnalités qui traversent plusieurs modules (`attach: "generated"`, `{{link:...}}`) n'y apparaissent donc pas — voir `configs/exemples/multiModuleExemple.json` (§ ci-dessus) pour un profil complet où les cinq modules collaborent sur la même ligne. Tous ces profils chargent sans erreur (vérifié par `src/config/exampleProfiles.test.ts`) mais utilisent des identifiants Drive/Sheet factices — pas destinés à être exécutés tels quels contre un vrai Sheet.
+
+Fichiers annexes référencés par certains de ces exemples : `configs/data/json2columns/` (fichiers JSON sources pour `json2columns[].file`) et `configs/html/` (corps HTML externes pour `mail[].template_html_path`).
 
 ## Syntaxe des balises
 

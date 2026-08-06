@@ -3,7 +3,7 @@
   "sheetTabName": "Contrats",
   "json2columns": [
     {
-      "file": "configs/json2columnsDataBasic.json",
+      "file": "configs/data/json2columns/json2columnsDataBasic.json",
       "key_column": "Matricule"
     }
   ]

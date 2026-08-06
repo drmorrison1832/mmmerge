@@ -8,7 +8,7 @@
       "to": "{{Email}}",
       "cc": ["rh@example.com"],
       "subject": "Votre contrat CDDU {{Annee:date[format:yyyy]}}",
-      "template_html_path": "configs/mailExempleAdvancedBody.html",
+      "template_html_path": "configs/html/mailExempleAdvancedBody.html",
       "draft_only": true,
       "attach": "external",
       "externalFolder": "Justificatifs/{{Annee:date[format:yyyy]}}",

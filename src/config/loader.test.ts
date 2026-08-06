@@ -56,7 +56,7 @@ describe('loadConfig', () => {
   });
 
   it('charge le profil "multiModuleExemple" et applique les valeurs par défaut absentes du fichier', () => {
-    const config = loadConfig('multiModuleExemple', []);
+    const config = loadConfig('exemples/multiModuleExemple', []);
 
     expect(config.sheetId).toBe('1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij');
     expect(config.sheetTabName).toBe('Contrats');
@@ -68,12 +68,12 @@ describe('loadConfig', () => {
   });
 
   it('un override CLI (--autoCreateFolders=false) prend le pas sur le défaut du schéma', () => {
-    const config = loadConfig('multiModuleExemple', ['--autoCreateFolders=false']);
+    const config = loadConfig('exemples/multiModuleExemple', ['--autoCreateFolders=false']);
     expect(config.autoCreateFolders).toBe(false);
   });
 
   it('un override CLI (--sheetId=...) prend le pas sur la valeur du profil', () => {
-    const config = loadConfig('multiModuleExemple', ['--sheetId=OVERRIDDEN']);
+    const config = loadConfig('exemples/multiModuleExemple', ['--sheetId=OVERRIDDEN']);
     expect(config.sheetId).toBe('OVERRIDDEN');
   });
 

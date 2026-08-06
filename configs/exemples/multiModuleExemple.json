@@ -5,7 +5,7 @@
     {
       "name": "Statut et type",
       "description": "Importe Statut/Type depuis un export du SIRH, indexé par matricule.",
-      "file": "configs/json2columnsDataMultiModule.json",
+      "file": "configs/data/json2columns/json2columnsDataMultiModule.json",
       "key_column": "Matricule"
     }
   ],

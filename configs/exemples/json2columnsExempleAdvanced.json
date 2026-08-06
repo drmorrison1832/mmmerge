@@ -5,13 +5,13 @@
     {
       "name": "Statut et type de contrat",
       "description": "Importe Statut/Type depuis un export du SIRH, indexé par matricule.",
-      "file": "configs/json2columnsDataAdvanced.json",
+      "file": "configs/data/json2columns/json2columnsDataAdvanced.json",
       "key_column": "Matricule"
     },
     {
       "name": "Département",
       "description": "Deuxième instance, indexée par email plutôt que par matricule.",
-      "file": "configs/json2columnsDataAdvancedDepartements.json",
+      "file": "configs/data/json2columns/json2columnsDataAdvancedDepartements.json",
       "key_column": "Email",
       "filter": {
         "match": "none",
@@ -22,7 +22,7 @@
       "name": "Ancien import (désactivé)",
       "description": "Conservé pour référence, remplacé par les deux instances ci-dessus.",
       "disable": true,
-      "file": "configs/json2columnsDataBasic.json",
+      "file": "configs/data/json2columns/json2columnsDataBasic.json",
       "key_column": "Matricule"
     }
   ]
