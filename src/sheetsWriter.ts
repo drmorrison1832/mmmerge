@@ -257,7 +257,7 @@ export class SheetsWriter {
     return this.headers.includes(columnName);
   }
 
-  /** Écrit plusieurs colonnes déjà existantes en un seul appel (module lookup[]) — voir hasColumn pour la validation préalable. */
+  /** Écrit plusieurs colonnes déjà existantes en un seul appel (module json2columns[]) — voir hasColumn pour la validation préalable. */
   async writeColumns(rowNumber: number, entries: Record<string, string>): Promise<void> {
     const now = this.nowFormatted();
     const cells: CellWrite[] = Object.entries(entries).map(([columnName, value]) => ({

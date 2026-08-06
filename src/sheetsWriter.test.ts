@@ -190,7 +190,7 @@ const baseProfile: Config = {
   pdf: [{ disable: false, template_id: 't', output_folder: 'f', output_filename: 'n', name: 'Copie archives' }],
   mail: [],
   columns: [],
-  lookup: [],
+  json2columns: [],
 };
 
 describe('closeRow', () => {

@@ -1,0 +1,10 @@
+{
+  "sheetId": "1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij",
+  "sheetTabName": "Contrats",
+  "json2columns": [
+    {
+      "file": "configs/json2columnsDataBasic.json",
+      "key_column": "Matricule"
+    }
+  ]
+}

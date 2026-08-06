@@ -40,7 +40,7 @@ export const ColumnsInstanceSchema = z
   })
   .merge(InstanceMetaSchema);
 
-export const LookupInstanceSchema = z
+export const Json2ColumnsInstanceSchema = z
   .object({
     /** Chemin vers le fichier JSON source — voir superRefine (ProfileSchema) pour la validation de forme. */
     file: z.string(),
@@ -141,17 +141,17 @@ export const ProfileSchema = z
     pdf: z.array(PdfInstanceSchema).optional().default([]),
     mail: z.array(MailInstanceSchema).optional().default([]),
     columns: z.array(ColumnsInstanceSchema).optional().default([]),
-    lookup: z.array(LookupInstanceSchema).optional().default([]),
+    json2columns: z.array(Json2ColumnsInstanceSchema).optional().default([]),
   })
   .superRefine((config, ctx) => {
-    config.lookup.forEach((lookupInstance, lookupIndex) => {
+    config.json2columns.forEach((json2ColumnsInstance, json2ColumnsIndex) => {
       let raw: string;
       try {
-        raw = readFileSync(lookupInstance.file, 'utf-8');
+        raw = readFileSync(json2ColumnsInstance.file, 'utf-8');
       } catch {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `lookup[${lookupIndex}].file : fichier "${lookupInstance.file}" introuvable ou illisible.`,
+          message: `json2columns[${json2ColumnsIndex}].file : fichier "${json2ColumnsInstance.file}" introuvable ou illisible.`,
         });
         return;
       }
@@ -162,7 +162,7 @@ export const ProfileSchema = z
       } catch {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `lookup[${lookupIndex}].file : "${lookupInstance.file}" ne contient pas un JSON valide.`,
+          message: `json2columns[${json2ColumnsIndex}].file : "${json2ColumnsInstance.file}" ne contient pas un JSON valide.`,
         });
         return;
       }
@@ -173,7 +173,7 @@ export const ProfileSchema = z
       if (!isPlainObject(parsed)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `lookup[${lookupIndex}].file : "${lookupInstance.file}" doit être un objet JSON de premier niveau (clé → objet de colonnes).`,
+          message: `json2columns[${json2ColumnsIndex}].file : "${json2ColumnsInstance.file}" doit être un objet JSON de premier niveau (clé → objet de colonnes).`,
         });
         return;
       }
@@ -182,7 +182,7 @@ export const ProfileSchema = z
         if (!isPlainObject(entry)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: `lookup[${lookupIndex}].file : la valeur de la clé "${key}" doit être un objet (colonne → valeur).`,
+            message: `json2columns[${json2ColumnsIndex}].file : la valeur de la clé "${key}" doit être un objet (colonne → valeur).`,
           });
           continue;
         }
@@ -190,7 +190,7 @@ export const ProfileSchema = z
           if (value !== null && typeof value === 'object') {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
-              message: `lookup[${lookupIndex}].file : clé "${key}", colonne "${column}" : valeur non simple (chaîne/nombre/booléen attendu).`,
+              message: `json2columns[${json2ColumnsIndex}].file : clé "${key}", colonne "${column}" : valeur non simple (chaîne/nombre/booléen attendu).`,
             });
           }
         }
@@ -295,4 +295,4 @@ export type GdocsInstance = z.infer<typeof GdocsInstanceSchema>;
 export type PdfInstance = z.infer<typeof PdfInstanceSchema>;
 export type MailInstance = z.infer<typeof MailInstanceSchema>;
 export type ColumnsInstance = z.infer<typeof ColumnsInstanceSchema>;
-export type LookupInstance = z.infer<typeof LookupInstanceSchema>;
+export type Json2ColumnsInstance = z.infer<typeof Json2ColumnsInstanceSchema>;

@@ -1,0 +1,29 @@
+{
+  "sheetId": "1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij",
+  "sheetTabName": "Contrats",
+  "json2columns": [
+    {
+      "name": "Statut et type de contrat",
+      "description": "Importe Statut/Type depuis un export du SIRH, indexé par matricule.",
+      "file": "configs/json2columnsDataAdvanced.json",
+      "key_column": "Matricule"
+    },
+    {
+      "name": "Département",
+      "description": "Deuxième instance, indexée par email plutôt que par matricule.",
+      "file": "configs/json2columnsDataAdvancedDepartements.json",
+      "key_column": "Email",
+      "filter": {
+        "match": "none",
+        "conditions": [{ "label": "Statut", "criterium": "equals", "value": "Inactif" }]
+      }
+    },
+    {
+      "name": "Ancien import (désactivé)",
+      "description": "Conservé pour référence, remplacé par les deux instances ci-dessus.",
+      "disable": true,
+      "file": "configs/json2columnsDataBasic.json",
+      "key_column": "Matricule"
+    }
+  ]
+}

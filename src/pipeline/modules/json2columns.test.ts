@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runLookupInstance } from './lookup.js';
+import { runJson2ColumnsInstance } from './json2columns.js';
 import type { PipelineDeps } from '../deps.js';
-import type { LookupInstance } from '../../config/schema.js';
+import type { Json2ColumnsInstance } from '../../config/schema.js';
 import type { RowContext } from '../rowContext.js';
 
 let tmpFiles: string[] = [];
@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 function writeJsonFixture(content: unknown): string {
-  const dir = mkdtempSync(join(tmpdir(), 'mmmerge-lookup-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'mmmerge-json2columns-test-'));
   tmpFiles.push(dir);
   const path = join(dir, 'data.json');
   writeFileSync(path, JSON.stringify(content), 'utf-8');
@@ -34,7 +34,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): {
     gmail: {} as PipelineDeps['gmail'],
     sheetsWriter: { hasColumn, writeColumns } as unknown as PipelineDeps['sheetsWriter'],
     folderCache: new Map(),
-    profile: { sheetId: 's', sheetTabName: 't', autoCreateFolders: true, defaultDateFormat: 'd/M/yyyy', gdocs: [], pdf: [], mail: [], columns: [], lookup: [] },
+    profile: { sheetId: 's', sheetTabName: 't', autoCreateFolders: true, defaultDateFormat: 'd/M/yyyy', gdocs: [], pdf: [], mail: [], columns: [], json2columns: [] },
     defaultDateFormat: 'd/M/yyyy',
     autoCreateFolders: true,
     dryRun: false,
@@ -44,7 +44,7 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): {
   return { deps, hasColumn, writeColumns };
 }
 
-function baseConfig(overrides: Partial<LookupInstance> = {}): LookupInstance {
+function baseConfig(overrides: Partial<Json2ColumnsInstance> = {}): Json2ColumnsInstance {
   return {
     disable: false,
     file: writeJsonFixture({ 'Dupont-1': { Statut: 'Actif', Type: 'CDD' } }),
@@ -57,12 +57,12 @@ function baseContext(): RowContext {
   return { rowNumber: 5, rawData: { Matricule: 'Dupont-1' }, outputs: {} };
 }
 
-describe('runLookupInstance', () => {
+describe('runJson2ColumnsInstance', () => {
   it('trouve la clé, écrit les colonnes et les rend disponibles via rawData', async () => {
     const { deps, writeColumns } = createDeps();
     const context = baseContext();
 
-    const enriched = await runLookupInstance('lookup[0]', baseConfig(), context, deps);
+    const enriched = await runJson2ColumnsInstance('json2columns[0]', baseConfig(), context, deps);
 
     expect(enriched).toBe(true);
     expect(writeColumns).toHaveBeenCalledWith(5, { Statut: 'Actif', Type: 'CDD' });
@@ -74,7 +74,7 @@ describe('runLookupInstance', () => {
     const { deps, writeColumns } = createDeps();
     const config = baseConfig({ file: writeJsonFixture({ 'Dupont-1': { Anciennete: 5, Actif: true } }) });
 
-    await runLookupInstance('lookup[0]', config, baseContext(), deps);
+    await runJson2ColumnsInstance('json2columns[0]', config, baseContext(), deps);
 
     expect(writeColumns).toHaveBeenCalledWith(5, { Anciennete: '5', Actif: 'true' });
   });
@@ -84,7 +84,7 @@ describe('runLookupInstance', () => {
     const config = baseConfig({ file: writeJsonFixture({ 'Autre-Cle': {} }) });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const enriched = await runLookupInstance('lookup[0]', config, baseContext(), deps);
+    const enriched = await runJson2ColumnsInstance('json2columns[0]', config, baseContext(), deps);
 
     expect(enriched).toBe(false);
     expect(writeColumns).not.toHaveBeenCalled();
@@ -96,7 +96,7 @@ describe('runLookupInstance', () => {
     const { deps } = createDeps();
     const config = baseConfig({ key_column: 'Inconnue' });
 
-    await expect(runLookupInstance('lookup[0]', config, baseContext(), deps)).rejects.toThrow(
+    await expect(runJson2ColumnsInstance('json2columns[0]', config, baseContext(), deps)).rejects.toThrow(
       /Colonne clé "Inconnue" absente/,
     );
   });
@@ -106,7 +106,7 @@ describe('runLookupInstance', () => {
     hasColumn.mockImplementation((column: string) => column !== 'Statut' && column !== 'Type');
     const config = baseConfig();
 
-    await expect(runLookupInstance('lookup[0]', config, baseContext(), deps)).rejects.toThrow(
+    await expect(runJson2ColumnsInstance('json2columns[0]', config, baseContext(), deps)).rejects.toThrow(
       /Statut, Type/,
     );
   });
@@ -115,7 +115,7 @@ describe('runLookupInstance', () => {
     const { deps, hasColumn, writeColumns } = createDeps();
     hasColumn.mockImplementation((column: string) => column !== 'Type');
 
-    await expect(runLookupInstance('lookup[0]', baseConfig(), baseContext(), deps)).rejects.toThrow();
+    await expect(runJson2ColumnsInstance('json2columns[0]', baseConfig(), baseContext(), deps)).rejects.toThrow();
     expect(writeColumns).not.toHaveBeenCalled();
   });
 
@@ -123,7 +123,7 @@ describe('runLookupInstance', () => {
     const { deps } = createDeps();
     const config = baseConfig({ file: '/does/not/exist.json' });
 
-    await expect(runLookupInstance('lookup[0]', config, baseContext(), deps)).rejects.toThrow(
+    await expect(runJson2ColumnsInstance('json2columns[0]', config, baseContext(), deps)).rejects.toThrow(
       /introuvable ou illisible/,
     );
   });
@@ -133,9 +133,9 @@ describe('runLookupInstance', () => {
     const path = writeJsonFixture({ 'Dupont-1': { Statut: 'Actif' } });
     const config = baseConfig({ file: path });
 
-    await runLookupInstance('lookup[0]', config, baseContext(), deps);
+    await runJson2ColumnsInstance('json2columns[0]', config, baseContext(), deps);
     writeFileSync(path, JSON.stringify({ 'Dupont-1': { Statut: 'Inactif' } }), 'utf-8');
-    await runLookupInstance('lookup[0]', config, baseContext(), deps);
+    await runJson2ColumnsInstance('json2columns[0]', config, baseContext(), deps);
 
     expect(writeColumns).toHaveBeenNthCalledWith(1, 5, { Statut: 'Actif' });
     expect(writeColumns).toHaveBeenNthCalledWith(2, 5, { Statut: 'Inactif' });

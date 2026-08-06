@@ -1,0 +1,33 @@
+{
+  "sheetId": "1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij",
+  "sheetTabName": "Contrats",
+  "mail": [
+    {
+      "name": "Envoi contrat",
+      "description": "Email principal envoyé au salarié, avec une pièce jointe déjà présente sur Drive (pas générée par ce profil).",
+      "to": "{{Email}}",
+      "cc": ["rh@example.com"],
+      "subject": "Votre contrat CDDU {{Annee:date[format:yyyy]}}",
+      "template_html_path": "configs/mailExempleAdvancedBody.html",
+      "draft_only": true,
+      "attach": "external",
+      "externalFolder": "Justificatifs/{{Annee:date[format:yyyy]}}",
+      "external": ["Attestation {{Nom}}.pdf"],
+      "link_column": "Lien mail",
+      "filter": {
+        "match": "all",
+        "conditions": [{ "label": "Statut", "criterium": "equals", "value": "Actif" }]
+      }
+    },
+    {
+      "name": "Relance (en préparation)",
+      "description": "Second gabarit d'email, pas encore activé.",
+      "disable": true,
+      "to": "{{Email}}",
+      "subject": "Relance",
+      "template_html": "<p>Relance.</p>",
+      "draft_only": true,
+      "attach": "none"
+    }
+  ]
+}

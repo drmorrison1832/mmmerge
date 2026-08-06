@@ -79,7 +79,7 @@ function baseProfile(overrides: Partial<Config> = {}): Config {
     pdf: [],
     mail: [],
     columns: [],
-    lookup: [],
+    json2columns: [],
     ...overrides,
   };
 }
@@ -545,11 +545,11 @@ describe('processRow', () => {
     expect(columnsWritten).toBe(2);
   });
 
-  it('exécute lookup[] avant columns[] et gdocs[], et rend les colonnes importées disponibles via {{...}}', async () => {
+  it('exécute json2columns[] avant columns[] et gdocs[], et rend les colonnes importées disponibles via {{...}}', async () => {
     const { deps } = createDeps();
     const dataFile = writeJsonDataFile({ Dupont: { Statut: 'Actif' } });
     const profile = baseProfile({
-      lookup: [{ disable: false, file: dataFile, key_column: 'Nom' }],
+      json2columns: [{ disable: false, file: dataFile, key_column: 'Nom' }],
       columns: [{ disable: false, template: '{{Statut}} recalculé', output_column: 'StatutCalcule' }],
       gdocs: [{ disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{StatutCalcule}}' }],
     });
@@ -562,11 +562,11 @@ describe('processRow', () => {
     );
   });
 
-  it('lookup[] respecte disable/filter comme les autres modules', async () => {
+  it('json2columns[] respecte disable/filter comme les autres modules', async () => {
     const { deps } = createDeps();
     const dataFile = writeJsonDataFile({ Dupont: { Statut: 'Actif' } });
     const profile = baseProfile({
-      lookup: [
+      json2columns: [
         { disable: true, file: dataFile, key_column: 'Nom' },
         { disable: false, file: dataFile, key_column: 'Nom', filter: { match: 'all', conditions: [{ label: 'Nom', criterium: 'equals', value: 'Martin' }] } },
       ],
@@ -579,12 +579,12 @@ describe('processRow', () => {
     expect(deps.sheetsWriter.writeColumns).not.toHaveBeenCalled();
   });
 
-  it("retourne lookupEnriched = nombre de lignes effectivement enrichies (clé trouvée)", async () => {
+  it("retourne json2ColumnsEnriched = nombre de lignes effectivement enrichies (clé trouvée)", async () => {
     const { deps } = createDeps();
     const dataFile = writeJsonDataFile({ Dupont: { Statut: 'Actif' } });
     const noMatchFile = writeJsonDataFile({ 'Personne d\'autre': { Statut: 'Actif' } });
     const profile = baseProfile({
-      lookup: [
+      json2columns: [
         { disable: false, file: dataFile, key_column: 'Nom' },
         { disable: false, file: noMatchFile, key_column: 'Nom' },
       ],
@@ -592,9 +592,9 @@ describe('processRow', () => {
     });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const { lookupEnriched } = await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
+    const { json2ColumnsEnriched } = await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
 
-    expect(lookupEnriched).toBe(1);
+    expect(json2ColumnsEnriched).toBe(1);
     warnSpy.mockRestore();
   });
 });
@@ -773,7 +773,7 @@ describe('runPipeline (intégration)', () => {
     logSpy.mockRestore();
   });
 
-  it('le résumé compte les lignes enrichies via lookup[], sans purger ni créer de colonne', async () => {
+  it('le résumé compte les lignes enrichies via json2columns[], sans purger ni créer de colonne', async () => {
     const { sheets, update } = createMockSheetsClient(
       [
         ['Dupont', '', '', ''],
@@ -792,7 +792,7 @@ describe('runPipeline (intégration)', () => {
     const dataFile = writeJsonDataFile({ Dupont: { Statut: 'Actif' } });
     const profile = baseProfile({
       gdocs: [],
-      lookup: [{ disable: false, file: dataFile, key_column: 'Nom' }],
+      json2columns: [{ disable: false, file: dataFile, key_column: 'Nom' }],
     });
 
     const code = await runPipeline(profile, baseCliFlags());

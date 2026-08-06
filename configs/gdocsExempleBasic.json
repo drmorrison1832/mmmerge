@@ -1,0 +1,11 @@
+{
+  "sheetId": "1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij",
+  "sheetTabName": "Contrats",
+  "gdocs": [
+    {
+      "template_id": "1TemplateGdocsIdXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_folder_id": "1DriveFolderIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_filename": "CDDU {{Nom}} {{Prenom}}"
+    }
+  ]
+}

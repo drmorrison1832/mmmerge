@@ -10,12 +10,12 @@
 import { readFileSync } from 'node:fs';
 import type { RowContext } from '../rowContext.js';
 import { ModuleError } from '../rowContext.js';
-import type { LookupInstance } from '../../config/schema.js';
+import type { Json2ColumnsInstance } from '../../config/schema.js';
 import type { PipelineDeps } from '../deps.js';
 
-type LookupTable = Record<string, Record<string, unknown>>;
+type Json2ColumnsTable = Record<string, Record<string, unknown>>;
 
-function loadLookupTable(moduleName: string, filePath: string): LookupTable {
+function loadJson2ColumnsTable(moduleName: string, filePath: string): Json2ColumnsTable {
   let raw: string;
   try {
     raw = readFileSync(filePath, 'utf-8');
@@ -29,9 +29,9 @@ function loadLookupTable(moduleName: string, filePath: string): LookupTable {
   }
 }
 
-export async function runLookupInstance(
+export async function runJson2ColumnsInstance(
   moduleName: string,
-  config: LookupInstance,
+  config: Json2ColumnsInstance,
   context: RowContext,
   deps: PipelineDeps,
 ): Promise<boolean> {
@@ -40,7 +40,7 @@ export async function runLookupInstance(
   }
   const keyValue = context.rawData[config.key_column];
 
-  const table = loadLookupTable(moduleName, config.file);
+  const table = loadJson2ColumnsTable(moduleName, config.file);
   const entry = table[keyValue];
   if (!entry) {
     console.warn(

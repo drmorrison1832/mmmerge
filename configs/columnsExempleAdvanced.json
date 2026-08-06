@@ -1,0 +1,29 @@
+{
+  "sheetId": "1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij",
+  "sheetTabName": "Contrats",
+  "columns": [
+    {
+      "name": "Nom complet",
+      "description": "Combine prénom et nom — réutilisé par l'instance suivante sur la même ligne.",
+      "template": "{{Prenom}} {{Nom}}",
+      "output_column": "NomComplet"
+    },
+    {
+      "name": "En-tête courrier",
+      "description": "Réutilise NomComplet, calculé juste avant sur la même ligne.",
+      "template": "{{NomComplet}} — {{Annee:date[format:yyyy]}}",
+      "output_column": "EnTeteCourrier",
+      "filter": {
+        "match": "all",
+        "conditions": [{ "label": "Statut", "criterium": "equals", "value": "Actif" }]
+      }
+    },
+    {
+      "name": "Ancien calcul (désactivé)",
+      "description": "Conservé pour référence, remplacé par les deux instances ci-dessus.",
+      "disable": true,
+      "template": "{{Nom}}",
+      "output_column": "AncienCalcul"
+    }
+  ]
+}

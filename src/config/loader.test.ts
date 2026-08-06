@@ -48,15 +48,15 @@ describe('loadConfig', () => {
     removeFixture('__test-columns-reserved');
     removeFixture('__test-link-column');
     removeFixture('__test-link-column-reserved');
-    removeFixture('__test-lookup-valide');
-    removeFixture('__test-lookup-missing-file');
-    removeFixture('__test-lookup-invalid-json');
-    removeFixture('__test-lookup-bad-shape');
-    removeFixture('__test-lookup-bad-leaf');
+    removeFixture('__test-json2columns-valide');
+    removeFixture('__test-json2columns-missing-file');
+    removeFixture('__test-json2columns-invalid-json');
+    removeFixture('__test-json2columns-bad-shape');
+    removeFixture('__test-json2columns-bad-leaf');
   });
 
-  it('charge le profil "exemple" et applique les valeurs par défaut absentes du fichier', () => {
-    const config = loadConfig('exemple', []);
+  it('charge le profil "multiModuleExemple" et applique les valeurs par défaut absentes du fichier', () => {
+    const config = loadConfig('multiModuleExemple', []);
 
     expect(config.sheetId).toBe('1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij');
     expect(config.sheetTabName).toBe('Contrats');
@@ -68,12 +68,12 @@ describe('loadConfig', () => {
   });
 
   it('un override CLI (--autoCreateFolders=false) prend le pas sur le défaut du schéma', () => {
-    const config = loadConfig('exemple', ['--autoCreateFolders=false']);
+    const config = loadConfig('multiModuleExemple', ['--autoCreateFolders=false']);
     expect(config.autoCreateFolders).toBe(false);
   });
 
   it('un override CLI (--sheetId=...) prend le pas sur la valeur du profil', () => {
-    const config = loadConfig('exemple', ['--sheetId=OVERRIDDEN']);
+    const config = loadConfig('multiModuleExemple', ['--sheetId=OVERRIDDEN']);
     expect(config.sheetId).toBe('OVERRIDDEN');
   });
 
@@ -288,63 +288,63 @@ describe('loadConfig', () => {
     expect(() => loadConfig('__test-columns-reserved', [])).toThrow(/mmm_status.*réservée/s);
   });
 
-  it('"lookup" (file + key_column) est accepté et chargé tel quel', () => {
+  it('"json2columns" (file + key_column) est accepté et chargé tel quel', () => {
     const dataFile = writeJsonDataFile({ 'Dupont-1': { Statut: 'Actif' } });
     writeFixture(
-      '__test-lookup-valide',
+      '__test-json2columns-valide',
       JSON.stringify({
         ...baseProfileFields(),
-        lookup: [{ file: dataFile, key_column: 'Matricule' }],
+        json2columns: [{ file: dataFile, key_column: 'Matricule' }],
       }),
     );
-    const config = loadConfig('__test-lookup-valide', []);
-    expect(config.lookup[0]).toMatchObject({ file: dataFile, key_column: 'Matricule', disable: false });
+    const config = loadConfig('__test-json2columns-valide', []);
+    expect(config.json2columns[0]).toMatchObject({ file: dataFile, key_column: 'Matricule', disable: false });
   });
 
-  it('"lookup[].file" doit exister et être lisible', () => {
+  it('"json2columns[].file" doit exister et être lisible', () => {
     writeFixture(
-      '__test-lookup-missing-file',
+      '__test-json2columns-missing-file',
       JSON.stringify({
         ...baseProfileFields(),
-        lookup: [{ file: '/does/not/exist.json', key_column: 'Matricule' }],
+        json2columns: [{ file: '/does/not/exist.json', key_column: 'Matricule' }],
       }),
     );
-    expect(() => loadConfig('__test-lookup-missing-file', [])).toThrow(/introuvable ou illisible/);
+    expect(() => loadConfig('__test-json2columns-missing-file', [])).toThrow(/introuvable ou illisible/);
   });
 
-  it('"lookup[].file" doit contenir un JSON valide', () => {
+  it('"json2columns[].file" doit contenir un JSON valide', () => {
     const dataFile = writeJsonDataFile('pas du json');
     writeFixture(
-      '__test-lookup-invalid-json',
+      '__test-json2columns-invalid-json',
       JSON.stringify({
         ...baseProfileFields(),
-        lookup: [{ file: dataFile, key_column: 'Matricule' }],
+        json2columns: [{ file: dataFile, key_column: 'Matricule' }],
       }),
     );
-    expect(() => loadConfig('__test-lookup-invalid-json', [])).toThrow(/JSON valide/);
+    expect(() => loadConfig('__test-json2columns-invalid-json', [])).toThrow(/JSON valide/);
   });
 
-  it('"lookup[].file" doit être un objet de premier niveau dont chaque valeur est aussi un objet', () => {
+  it('"json2columns[].file" doit être un objet de premier niveau dont chaque valeur est aussi un objet', () => {
     const dataFile = writeJsonDataFile({ 'Dupont-1': 'pas un objet' });
     writeFixture(
-      '__test-lookup-bad-shape',
+      '__test-json2columns-bad-shape',
       JSON.stringify({
         ...baseProfileFields(),
-        lookup: [{ file: dataFile, key_column: 'Matricule' }],
+        json2columns: [{ file: dataFile, key_column: 'Matricule' }],
       }),
     );
-    expect(() => loadConfig('__test-lookup-bad-shape', [])).toThrow(/doit être un objet/);
+    expect(() => loadConfig('__test-json2columns-bad-shape', [])).toThrow(/doit être un objet/);
   });
 
-  it('"lookup[].file" rejette une valeur de colonne non simple (objet imbriqué)', () => {
+  it('"json2columns[].file" rejette une valeur de colonne non simple (objet imbriqué)', () => {
     const dataFile = writeJsonDataFile({ 'Dupont-1': { Statut: { imbriqué: true } } });
     writeFixture(
-      '__test-lookup-bad-leaf',
+      '__test-json2columns-bad-leaf',
       JSON.stringify({
         ...baseProfileFields(),
-        lookup: [{ file: dataFile, key_column: 'Matricule' }],
+        json2columns: [{ file: dataFile, key_column: 'Matricule' }],
       }),
     );
-    expect(() => loadConfig('__test-lookup-bad-leaf', [])).toThrow(/valeur non simple/);
+    expect(() => loadConfig('__test-json2columns-bad-leaf', [])).toThrow(/valeur non simple/);
   });
 });

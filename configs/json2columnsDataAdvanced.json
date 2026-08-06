@@ -1,0 +1,5 @@
+{
+  "M-001": { "Statut": "Actif", "Type": "CDD" },
+  "M-002": { "Statut": "Inactif", "Type": "CDI" },
+  "M-003": { "Statut": "Actif", "Type": "CDI" }
+}

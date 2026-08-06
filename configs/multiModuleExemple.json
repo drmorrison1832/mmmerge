@@ -1,0 +1,63 @@
+{
+  "sheetId": "1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij",
+  "sheetTabName": "Contrats",
+  "json2columns": [
+    {
+      "name": "Statut et type",
+      "description": "Importe Statut/Type depuis un export du SIRH, indexé par matricule.",
+      "file": "configs/json2columnsDataMultiModule.json",
+      "key_column": "Matricule"
+    }
+  ],
+  "columns": [
+    {
+      "name": "Nom complet",
+      "description": "Combine prénom et nom, réutilisé ci-dessous dans les noms de fichiers.",
+      "template": "{{Prenom}} {{Nom}}",
+      "output_column": "NomComplet"
+    }
+  ],
+  "gdocs": [
+    {
+      "name": "Contrat CDDU",
+      "template_id": "1TemplateGdocsIdXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_folder": "Contrats/{{Annee:date[format:yyyy]}}",
+      "output_filename": "CDDU {{NomComplet}}",
+      "filter": {
+        "match": "all",
+        "conditions": [{ "label": "Statut", "criterium": "equals", "value": "Actif" }]
+      },
+      "share": {
+        "email": { "addresses": ["{{Email}}"], "permission": "reader" }
+      }
+    }
+  ],
+  "pdf": [
+    {
+      "name": "Contrat CDDU (PDF)",
+      "template_id": "1TemplatePdfIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_folder_id": "1DriveFolderIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "output_filename": "CDDU {{NomComplet}}",
+      "link_column": "Lien PDF",
+      "filter": {
+        "match": "all",
+        "conditions": [{ "label": "Statut", "criterium": "equals", "value": "Actif" }]
+      }
+    }
+  ],
+  "mail": [
+    {
+      "name": "Envoi contrat",
+      "to": "{{Email}}",
+      "subject": "Votre contrat CDDU",
+      "template_html": "<p>Bonjour {{Prenom}},</p><p>Voici votre contrat : {{link:gdocs[0]}} (version modifiable), et en pièce jointe le PDF.</p>",
+      "draft_only": true,
+      "attach": "generated",
+      "generated": ["pdf[0]"],
+      "filter": {
+        "match": "all",
+        "conditions": [{ "label": "Statut", "criterium": "equals", "value": "Actif" }]
+      }
+    }
+  ]
+}

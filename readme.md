@@ -69,7 +69,7 @@ La ligne **1** est l'en-tête ; la première ligne de données possible est la l
 
 ## Configurer un profil
 
-Chaque profil est un fichier JSON dans `configs/<nom-du-profil>.json`. Exemple complet (voir aussi `configs/exemple.json`, utilisé par les tests) :
+Chaque profil est un fichier JSON dans `configs/<nom-du-profil>.json`. Exemple complet (voir aussi `configs/multiModuleExemple.json`, qui combine les cinq modules — utilisé par les tests) :
 
 ```json
 {
@@ -122,9 +122,9 @@ Points clés :
 - `gdocs`/`pdf` : chaque instance a **exactement une** des deux clés `output_folder` (chemin dynamique, balises autorisées, créé automatiquement selon `autoCreateFolders`) ou `output_folder_id` (ID Drive littéral).
 - `share` (gdocs uniquement) : partage du document généré — `email` et/ou `link`, permission `reader`/`commenter`/`editor`.
 - `mail` : corps via **exactement une** des deux clés `template_html` (inline) ou `template_html_path` (fichier externe). `attach` (`all`/`generated`/`external`/`none`) détermine les pièces jointes ; `generated` référence uniquement des instances `pdf[]` (un gDoc ne s'attache pas — utiliser `{{link:gdocs[i]}}` dans le corps pour un lien de consultation).
-- `columns` : calcule une valeur (`template`, même syntaxe de balise qu'ailleurs) et l'écrit dans une colonne du Sheet (`output_column`) — créée automatiquement si elle n'existe pas encore. S'exécute **avant** `gdocs`/`pdf`/`mail` (mais après `lookup`), donc `{{NomComplet}}` (exemple ci-dessus) est utilisable comme une balise normale dans leurs templates, pour la même ligne (voir exemple dédié plus bas).
-- `lookup` : enrichit une ligne à partir d'un fichier JSON externe (`file`), indexé par la valeur d'une colonne du Sheet (`key_column`) — voir exemple dédié plus bas. S'exécute **en premier**, avant même `columns`.
-- `gdocs[0]`, `pdf[1]`, `mail[0]`, `columns[0]`, `lookup[0]`... sont les identifiants techniques de position — stables, utilisés dans les erreurs, `generated`, `{{link:...}}`. La clé `name` (optionnelle) n'est qu'un affichage, jamais une référence.
+- `columns` : calcule une valeur (`template`, même syntaxe de balise qu'ailleurs) et l'écrit dans une colonne du Sheet (`output_column`) — créée automatiquement si elle n'existe pas encore. S'exécute **avant** `gdocs`/`pdf`/`mail` (mais après `json2columns`), donc `{{NomComplet}}` (exemple ci-dessus) est utilisable comme une balise normale dans leurs templates, pour la même ligne (voir exemple dédié plus bas).
+- `json2columns` : enrichit une ligne à partir d'un fichier JSON externe (`file`), indexé par la valeur d'une colonne du Sheet (`key_column`) — voir exemple dédié plus bas. S'exécute **en premier**, avant même `columns`.
+- `gdocs[0]`, `pdf[1]`, `mail[0]`, `columns[0]`, `json2columns[0]`... sont les identifiants techniques de position — stables, utilisés dans les erreurs, `generated`, `{{link:...}}`. La clé `name` (optionnelle) n'est qu'un affichage, jamais une référence.
 - `disable` (optionnel, tous types d'instance, défaut `false`) : désactive l'instance — ignorée à l'exécution, sans décaler les index des autres. Pratique pour désactiver temporairement un module en cours de configuration d'un profil. Une instance `mail[]` ne peut pas référencer (`generated`, `{{link:...}}`) une instance désactivée — erreur de configuration immédiate au chargement du profil, jamais au milieu d'une exécution.
 - `filter` (optionnel, tous types d'instance) : contrairement à `disable` (statique), exécute l'instance **seulement pour les lignes** dont les colonnes satisfont la condition configurée — voir exemple ci-dessous. Une instance filtrée pour une ligne donnée est simplement ignorée pour cette ligne, sans erreur.
 - `pdf[].output_filename` : l'extension `.pdf` est ajoutée automatiquement si absente (`CDDU {{Nom}}` devient `CDDU Dupont.pdf`) — insensible à la casse, jamais de doublon si `.pdf`/`.PDF` est déjà présent dans le nom résolu. Ne s'applique qu'au module `pdf` (un `gdocs[].output_filename` n'a pas d'extension à ajouter).
@@ -207,13 +207,13 @@ Points clés :
 }
 ```
 
-Si `NomComplet` n'existe pas déjà comme colonne du Sheet, elle est créée automatiquement (ajoutée en fin d'en-tête) — aucun flag à activer. `columns[]` s'exécute avant `gdocs`/`pdf`/`mail` (mais après `lookup[]`, voir plus bas).
+Si `NomComplet` n'existe pas déjà comme colonne du Sheet, elle est créée automatiquement (ajoutée en fin d'en-tête) — aucun flag à activer. `columns[]` s'exécute avant `gdocs`/`pdf`/`mail` (mais après `json2columns[]`, voir plus bas).
 
-**Enrichissement depuis un fichier JSON externe (`lookup`)** — chaque ligne du Sheet est complétée à partir d'un fichier JSON, en retrouvant son entrée via la valeur de la colonne `Matricule` :
+**Enrichissement depuis un fichier JSON externe (`json2columns`)** — chaque ligne du Sheet est complétée à partir d'un fichier JSON, en retrouvant son entrée via la valeur de la colonne `Matricule` :
 
 ```json
 {
-  "lookup": [
+  "json2columns": [
     {
       "file": "data/employes.json",
       "key_column": "Matricule"
@@ -289,6 +289,20 @@ Pour la ligne dont `Matricule` vaut `M-001`, les colonnes `Statut` et `Type` du 
 ```
 
 Détail complet du format (schéma Zod, toutes les clés, règles de validation) : `docs/specs.md` (comportement) et `docs/architecture.md` (technique).
+
+### Profils d'exemple prêts à l'emploi (`configs/`)
+
+En plus des extraits ci-dessus, chaque module a son propre profil d'exemple complet dans `configs/` — une version `Basic` (une seule instance, clés minimales) et une version `Advanced` (plusieurs instances, la plupart des clés optionnelles) :
+
+| Module | Basic | Advanced |
+|---|---|---|
+| gDocs | `gdocsExempleBasic.json` | `gdocsExempleAdvanced.json` |
+| PDF | `pdfExempleBasic.json` | `pdfExempleAdvanced.json` |
+| Mail | `mailExempleBasic.json` | `mailExempleAdvanced.json` |
+| Columns | `columnsExempleBasic.json` | `columnsExempleAdvanced.json` |
+| Json2Columns | `json2columnsExempleBasic.json` | `json2columnsExempleAdvanced.json` |
+
+Ces profils ciblent volontairement un seul module chacun ; les fonctionnalités qui traversent plusieurs modules (`attach: "generated"`, `{{link:...}}`) n'y apparaissent donc pas — voir `multiModuleExemple.json` (§ ci-dessus) pour un profil complet où les cinq modules collaborent sur la même ligne. Tous ces profils chargent sans erreur (vérifié par `src/config/exampleProfiles.test.ts`) mais utilisent des identifiants Drive/Sheet factices — pas destinés à être exécutés tels quels contre un vrai Sheet.
 
 ## Syntaxe des balises
 

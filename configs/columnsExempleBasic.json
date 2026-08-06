@@ -1,0 +1,10 @@
+{
+  "sheetId": "1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij",
+  "sheetTabName": "Contrats",
+  "columns": [
+    {
+      "template": "{{Prenom}} {{Nom}}",
+      "output_column": "NomComplet"
+    }
+  ]
+}

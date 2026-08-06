@@ -1,0 +1,13 @@
+{
+  "sheetId": "1AbCDeFGhIJKlmNoPQRstuVwxYZ0123456789abcdefghij",
+  "sheetTabName": "Contrats",
+  "mail": [
+    {
+      "to": "{{Email}}",
+      "subject": "Votre contrat CDDU",
+      "template_html": "<p>Bonjour {{Prenom}},</p><p>Ceci est un exemple de message.</p>",
+      "draft_only": true,
+      "attach": "none"
+    }
+  ]
+}
