@@ -1,7 +1,9 @@
 # Spécifications Techniques & Fonctionnelles : "MMMerge"
 
-> **Dernière mise à jour :** 2026-08-05 — v25
-> **Résumé des derniers changements :** `--lines` (§5) accepte désormais des plages `début-fin`, mélangées librement à des numéros individuels — ex: `--lines=2,4-6,9` cible les lignes 2, 4, 5, 6, 9. Une plage inversée (`6-4`) lève une `Erreur` explicite plutôt que d'être silencieusement vide. Voir architecture.md v27 pour le détail technique.
+> **Dernière mise à jour :** 2026-08-06 — v26
+> **Résumé des derniers changements :** Nouveau module `lookup` (§2, §3), tableau d'instances comme `columns`/`gdocs`/`pdf`/`mail` : enrichit une ligne à partir d'un fichier JSON externe (`file`), en la retrouvant par la valeur d'une colonne du Sheet (`key_column`). S'exécute en tout premier, avant `columns[]` — colonnes importées immédiatement utilisables via `{{...}}` en aval. Contrairement à `columns[].output_column`/`link_column`, les colonnes cibles (les clés du fichier JSON) doivent déjà exister — `Erreur` explicite listant toutes les colonnes manquantes, rien n'est écrit pour la ligne si au moins une manque (délibérément différent : ces noms viennent d'un fichier externe, pas du profil que l'utilisateur contrôle). Clé sans correspondance dans le fichier → ligne ignorée pour cette instance avec un avertissement, pas une erreur. Valeurs non textuelles converties en chaîne ; valeurs non simples (objets imbriqués) rejetées au chargement du profil, avec la forme générale du fichier (existence, JSON valide, structure clé → objet). Fichier relu à chaque ligne, sans cache (même choix que `mail[].template_html_path`). Aucune vérification d'unicité de `key_column` entre lignes — jugée disproportionnée, deux lignes partageant la même valeur reçoivent le même contenu. Résumé de fin d'exécution (§5) gagne "Lignes enrichies via JSON". Voir architecture.md v28 pour le détail technique.
+>
+> **Résumé v25 (2026-08-05) :** `--lines` (§5) accepte désormais des plages `début-fin`, mélangées librement à des numéros individuels — ex: `--lines=2,4-6,9` cible les lignes 2, 4, 5, 6, 9. Une plage inversée (`6-4`) lève une `Erreur` explicite plutôt que d'être silencieusement vide. Voir architecture.md v27 pour le détail technique.
 >
 > **Résumé v24 (2026-08-05) :** `link_column` (§3, v23) change de forme : de booléen (nom de colonne dérivé automatiquement de l'identifiant technique) à **chaîne optionnelle** — l'utilisateur choisit lui-même le nom de la colonne, comme il le fait déjà pour `columns[].output_column`. Absent → rien n'est écrit (comportement par défaut inchangé). Le nom choisi ne peut pas être une colonne système réservée — même garde statique que pour `columns[].output_column`, désormais partagée. Simplification, pas juste un changement de forme : supprime l'auto-dérivation depuis l'identifiant technique, donc plus de question de savoir si `name` devrait y participer (déjà tranché en v23 : non, `name` reste purement cosmétique) — l'utilisateur porte maintenant l'entière responsabilité du nom, exactement comme pour toute autre colonne qu'il configure lui-même. Voir architecture.md v26 pour le détail technique.
 >
@@ -92,15 +94,15 @@ En cas de crash technique non intercepté, la ligne peut rester bloquée à `En 
 
 ## 2. Architecture Modulaire & Cycle de vie du Pipeline
 
-Le pipeline suit quatre phases :
+Le pipeline suit cinq phases :
 
 ```
-[Filtre des lignes à traiter] → [Colonnes calculées] → [Création de fichiers : gDocs, PDF, ...] → [Mail]
+[Filtre des lignes à traiter] → [Enrichissement JSON] → [Colonnes calculées] → [Création de fichiers : gDocs, PDF, ...] → [Mail]
 ```
 
 gDocs et PDF restent deux modules indépendants, chacun en tableau d'instances (voir §3). Il n'y a pas de phase Attachment séparée : chaque instance Mail résout ses propres pièces jointes en interne, puisque des instances Mail différentes peuvent avoir besoin de combinaisons différentes pour une même ligne.
 
-La phase "Colonnes calculées" (`columns[]`, §3) s'exécute en premier, avant même `gdocs[]` : une valeur qu'elle écrit devient immédiatement utilisable via une balise `{{...}}` normale par les phases suivantes, pour la même ligne.
+La phase "Enrichissement JSON" (`lookup[]`, §3) s'exécute **en tout premier**, avant même `columns[]` : une valeur qu'elle importe devient immédiatement utilisable via une balise `{{...}}` normale par toutes les phases suivantes, pour la même ligne. La phase "Colonnes calculées" (`columns[]`, §3) s'exécute juste après, avant `gdocs[]` — même bénéfice, pour les valeurs qu'elle calcule.
 
 Au sein de la phase "Création de fichiers" : toutes les instances `gdocs[]` s'exécutent d'abord dans l'ordre du tableau, puis toutes les instances `pdf[]`. Ensuite, toutes les instances `mail[]` s'exécutent dans l'ordre du tableau.
 
@@ -132,7 +134,7 @@ Pour le MVP, toute ligne masquée dans le Google Sheet est **ignorée**, avec un
 
 ### Nom, description et désactivation (`name`, `description`, `disable`) — communs à toutes les instances
 
-Chaque instance (Columns, gDocs, PDF, ou Mail) accepte trois clés optionnelles :
+Chaque instance (Lookup, Columns, gDocs, PDF, ou Mail) accepte trois clés optionnelles :
 - `name` (chaîne, ≤ 80 caractères) : un intitulé court et lisible (ex: `"CDDU en PDF"`, `"Mail notification manager"`). N'affecte **aucune** référence technique — `generated`, `{{link:...}}`, et les messages d'erreur continuent d'utiliser l'identifiant de position (`gdocs[0]`, `pdf[1]`...) comme référence stable. Quand `name` est renseigné, il s'affiche simplement **en plus** de cet identifiant dans les messages d'erreur.
 - `description` (chaîne, ≤ 500 caractères) : notes libres à l'usage de l'utilisateur, jamais utilisées par le système.
 - `disable` (booléen, défaut `false`) : contrairement aux deux clés précédentes, **affecte le comportement**. Une instance désactivée n'est jamais exécutée pour aucune ligne — aucun appel Drive/Docs/Gmail, aucune entrée écrite dans `mmm_outputs`. Elle **conserve son identifiant de position** (désactiver `gdocs[0]` ne renomme pas `gdocs[1]` en `gdocs[0]`), pour ne jamais invalider silencieusement une référence `generated`/`{{link:...}}` ailleurs dans le profil. Objectif principal : pouvoir désactiver temporairement un module en cours de configuration d'un profil (ex: template pas encore prêt), sans avoir à le retirer et le rajouter au tableau.
@@ -166,6 +168,19 @@ Une clé optionnelle supplémentaire, chaîne (nom de colonne, comme `columns[].
 - Le nom est choisi par l'utilisateur, exactement comme `columns[].output_column` — ne peut pas être une colonne système réservée (`mmm_status`/`mmm_outputs`/`mmm_last_run`), même garde statique que pour `columns[].output_column`. Ne peut **jamais** être dérivé de `name` : `name` est documenté ailleurs dans ce fichier comme purement cosmétique, sans effet sur aucune référence technique — le baser sur une colonne persistée aurait fait d'un renommage anodin une opération avec un effet de bord réel (une nouvelle colonne apparaît, l'ancienne reste orpheline, puisque mmmerge ne supprime jamais de colonne).
 - En mode `--dry-run`, la colonne est quand même écrite, avec la même URL synthétique `(dry-run)` que `mmm_outputs`.
 - Absent de `columns[]` : cette instance ne produit pas de sortie de type "lien" (elle écrit directement la valeur calculée dans sa propre colonne cible, `output_column`) — `link_column` n'aurait aucun sens ici.
+
+### Enrichissement depuis un fichier JSON (`lookup`, tableau d'instances)
+
+Complète une ligne à partir d'un fichier JSON externe, en retrouvant l'entrée correspondante par la valeur d'une colonne du Sheet. Le fichier a la forme `{ "<valeur de clé>": { "<colonne>": "<valeur>", ... }, ... }` — chaque clé de premier niveau est une valeur possible de la colonne clé, chaque valeur associée est un objet colonne → valeur à écrire pour la ligne correspondante. Chaque instance :
+
+- `file` (chaîne, chemin vers le fichier JSON) : validé au chargement du profil (existence, JSON valide, forme attendue — objet de premier niveau dont chaque valeur est elle-même un objet) — `Erreur` de configuration sinon, avant même l'authentification. Relu à chaque ligne traitée par cette instance (comme `mail[].template_html_path`) — pas de mise en cache.
+- `key_column` (chaîne, nom littéral de colonne du Sheet — **jamais** de balise) : la colonne dont la valeur, pour la ligne en cours, sert de clé de recherche dans le fichier JSON. Colonne absente du Sheet → `Erreur` immédiate (même règle que pour une balise de template référençant une colonne absente).
+- Valeur de `key_column` sans correspondance dans le fichier JSON → la ligne est **ignorée pour cette instance**, avec un avertissement journalisé (jamais une `Erreur` — le fichier JSON peut légitimement ne couvrir qu'une partie des lignes).
+- Une fois l'entrée trouvée, chaque paire colonne → valeur est écrite dans la colonne correspondante du Sheet. Contrairement à `columns[].output_column`/`link_column`, **aucune création automatique** : chaque colonne cible doit déjà exister dans l'en-tête, sinon `Erreur` explicite listant **toutes** les colonnes manquantes de l'entrée en une seule fois (pas seulement la première) — rien n'est écrit pour cette ligne si au moins une colonne cible manque. Ce choix est délibéré : les noms de colonnes viennent ici d'un fichier externe (pas du profil, que l'utilisateur relit et contrôle directement), donc une création automatique masquerait plus facilement une faute de frappe dans le fichier JSON.
+- Une valeur JSON non textuelle (nombre, booléen) est convertie en chaîne avant écriture (`42` → `"42"`) ; une valeur non simple (objet, tableau imbriqué) est une `Erreur` de configuration détectée au chargement du profil.
+- S'exécute **en tout premier**, avant `columns[]`/`gdocs[]`/`pdf[]`/`mail[]` (§2) : les colonnes importées sont immédiatement disponibles pour ces instances via une balise `{{...}}` ordinaire.
+- Pas d'entrée dans `mmm_outputs` — comme `columns[]`, ce n'est pas un fichier à purger/tracer.
+- Aucune vérification d'unicité de la valeur de `key_column` entre plusieurs lignes : si deux lignes partagent la même valeur, elles reçoivent toutes les deux le contenu associé à cette clé dans le fichier JSON — délibérément non vérifié (le coût d'une vérification systématique a été jugé disproportionné par rapport au bénéfice).
 
 ### Colonnes calculées (`columns`, tableau d'instances)
 
@@ -314,7 +329,7 @@ Objectif : pouvoir déterminer précisément, à tout moment d'une exécution, c
 
 ### Résumé de fin d'exécution
 
-Hors `--validate`/`--list`, chaque exécution (y compris `--dry-run`) affiche un résumé : nombre de lignes traitées avec succès, nombre de colonnes renseignées, de documents gDocs/PDF générés et d'emails composés, et le numéro de la ligne en cause si le script s'est arrêté sur une `Erreur`. Le nombre de sorties par module compte les sorties **réellement produites** (une instance `disable: true`, ou dont le `filter` n'a été satisfait par aucune ligne traitée, n'en produit aucune) — pas simplement `lignes traitées × nombre d'instances actives`, qui surcompterait dès qu'un `filter` exclut une instance active sur au moins une ligne. Contrairement à `gdocs`/`pdf`/`mail`, `columns[]` n'apparaît pas dans le détail `--verbose` (§ ci-dessous) : le format ligne par ligne de ce détail (`<filename> : <url>` ou `<destinataire> - <sujet> - <url>`) ne convient pas à une simple valeur calculée — non traité pour l'instant.
+Hors `--validate`/`--list`, chaque exécution (y compris `--dry-run`) affiche un résumé : nombre de lignes traitées avec succès, nombre de lignes enrichies via JSON, de colonnes renseignées, de documents gDocs/PDF générés et d'emails composés, et le numéro de la ligne en cause si le script s'est arrêté sur une `Erreur`. Le nombre de sorties par module compte les sorties **réellement produites** (une instance `disable: true`, ou dont le `filter` n'a été satisfait par aucune ligne traitée, n'en produit aucune) — pas simplement `lignes traitées × nombre d'instances actives`, qui surcompterait dès qu'un `filter` exclut une instance active sur au moins une ligne. "Lignes enrichies via JSON" ne compte que les lignes où une clé a effectivement été trouvée dans le fichier — une clé sans correspondance (avertissement, §3) n'est pas comptée. Contrairement à `gdocs`/`pdf`/`mail`, `columns[]`/`lookup[]` n'apparaissent pas dans le détail `--verbose` (§ ci-dessous) : le format ligne par ligne de ce détail (`<filename> : <url>` ou `<destinataire> - <sujet> - <url>`) ne convient pas à une simple valeur calculée/importée — non traité pour l'instant.
 
 ### Détail `--verbose`
 

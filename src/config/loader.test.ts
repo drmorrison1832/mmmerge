@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from './loader.js';
@@ -18,6 +19,20 @@ function baseProfileFields(): Record<string, unknown> {
   return { sheetId: 'sheet-id', sheetTabName: 'Contrats' };
 }
 
+let tmpDirs: string[] = [];
+afterEach(() => {
+  for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
+  tmpDirs = [];
+});
+
+function writeJsonDataFile(content: unknown): string {
+  const dir = mkdtempSync(join(tmpdir(), 'mmmerge-loader-test-'));
+  tmpDirs.push(dir);
+  const path = join(dir, 'data.json');
+  writeFileSync(path, typeof content === 'string' ? content : JSON.stringify(content), 'utf-8');
+  return path;
+}
+
 describe('loadConfig', () => {
   afterEach(() => {
     removeFixture('__test-json-invalide');
@@ -33,6 +48,11 @@ describe('loadConfig', () => {
     removeFixture('__test-columns-reserved');
     removeFixture('__test-link-column');
     removeFixture('__test-link-column-reserved');
+    removeFixture('__test-lookup-valide');
+    removeFixture('__test-lookup-missing-file');
+    removeFixture('__test-lookup-invalid-json');
+    removeFixture('__test-lookup-bad-shape');
+    removeFixture('__test-lookup-bad-leaf');
   });
 
   it('charge le profil "exemple" et applique les valeurs par défaut absentes du fichier', () => {
@@ -266,5 +286,65 @@ describe('loadConfig', () => {
       }),
     );
     expect(() => loadConfig('__test-columns-reserved', [])).toThrow(/mmm_status.*réservée/s);
+  });
+
+  it('"lookup" (file + key_column) est accepté et chargé tel quel', () => {
+    const dataFile = writeJsonDataFile({ 'Dupont-1': { Statut: 'Actif' } });
+    writeFixture(
+      '__test-lookup-valide',
+      JSON.stringify({
+        ...baseProfileFields(),
+        lookup: [{ file: dataFile, key_column: 'Matricule' }],
+      }),
+    );
+    const config = loadConfig('__test-lookup-valide', []);
+    expect(config.lookup[0]).toMatchObject({ file: dataFile, key_column: 'Matricule', disable: false });
+  });
+
+  it('"lookup[].file" doit exister et être lisible', () => {
+    writeFixture(
+      '__test-lookup-missing-file',
+      JSON.stringify({
+        ...baseProfileFields(),
+        lookup: [{ file: '/does/not/exist.json', key_column: 'Matricule' }],
+      }),
+    );
+    expect(() => loadConfig('__test-lookup-missing-file', [])).toThrow(/introuvable ou illisible/);
+  });
+
+  it('"lookup[].file" doit contenir un JSON valide', () => {
+    const dataFile = writeJsonDataFile('pas du json');
+    writeFixture(
+      '__test-lookup-invalid-json',
+      JSON.stringify({
+        ...baseProfileFields(),
+        lookup: [{ file: dataFile, key_column: 'Matricule' }],
+      }),
+    );
+    expect(() => loadConfig('__test-lookup-invalid-json', [])).toThrow(/JSON valide/);
+  });
+
+  it('"lookup[].file" doit être un objet de premier niveau dont chaque valeur est aussi un objet', () => {
+    const dataFile = writeJsonDataFile({ 'Dupont-1': 'pas un objet' });
+    writeFixture(
+      '__test-lookup-bad-shape',
+      JSON.stringify({
+        ...baseProfileFields(),
+        lookup: [{ file: dataFile, key_column: 'Matricule' }],
+      }),
+    );
+    expect(() => loadConfig('__test-lookup-bad-shape', [])).toThrow(/doit être un objet/);
+  });
+
+  it('"lookup[].file" rejette une valeur de colonne non simple (objet imbriqué)', () => {
+    const dataFile = writeJsonDataFile({ 'Dupont-1': { Statut: { imbriqué: true } } });
+    writeFixture(
+      '__test-lookup-bad-leaf',
+      JSON.stringify({
+        ...baseProfileFields(),
+        lookup: [{ file: dataFile, key_column: 'Matricule' }],
+      }),
+    );
+    expect(() => loadConfig('__test-lookup-bad-leaf', [])).toThrow(/valeur non simple/);
   });
 });

@@ -40,6 +40,15 @@ export const ColumnsInstanceSchema = z
   })
   .merge(InstanceMetaSchema);
 
+export const LookupInstanceSchema = z
+  .object({
+    /** Chemin vers le fichier JSON source — voir superRefine (ProfileSchema) pour la validation de forme. */
+    file: z.string(),
+    /** Nom de la colonne du Sheet dont la valeur sert de clé dans le fichier JSON. */
+    key_column: z.string(),
+  })
+  .merge(InstanceMetaSchema);
+
 const FileModuleFieldsSchema = z
   .object({
     template_id: z.string(),
@@ -132,8 +141,62 @@ export const ProfileSchema = z
     pdf: z.array(PdfInstanceSchema).optional().default([]),
     mail: z.array(MailInstanceSchema).optional().default([]),
     columns: z.array(ColumnsInstanceSchema).optional().default([]),
+    lookup: z.array(LookupInstanceSchema).optional().default([]),
   })
   .superRefine((config, ctx) => {
+    config.lookup.forEach((lookupInstance, lookupIndex) => {
+      let raw: string;
+      try {
+        raw = readFileSync(lookupInstance.file, 'utf-8');
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `lookup[${lookupIndex}].file : fichier "${lookupInstance.file}" introuvable ou illisible.`,
+        });
+        return;
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `lookup[${lookupIndex}].file : "${lookupInstance.file}" ne contient pas un JSON valide.`,
+        });
+        return;
+      }
+
+      const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+        typeof value === 'object' && value !== null && !Array.isArray(value);
+
+      if (!isPlainObject(parsed)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `lookup[${lookupIndex}].file : "${lookupInstance.file}" doit être un objet JSON de premier niveau (clé → objet de colonnes).`,
+        });
+        return;
+      }
+
+      for (const [key, entry] of Object.entries(parsed)) {
+        if (!isPlainObject(entry)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `lookup[${lookupIndex}].file : la valeur de la clé "${key}" doit être un objet (colonne → valeur).`,
+          });
+          continue;
+        }
+        for (const [column, value] of Object.entries(entry)) {
+          if (value !== null && typeof value === 'object') {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `lookup[${lookupIndex}].file : clé "${key}", colonne "${column}" : valeur non simple (chaîne/nombre/booléen attendu).`,
+            });
+          }
+        }
+      }
+    });
+
     config.columns.forEach((columnsInstance, columnsIndex) => {
       if ((RESERVED_COLUMN_NAMES as readonly string[]).includes(columnsInstance.output_column)) {
         ctx.addIssue({
@@ -232,3 +295,4 @@ export type GdocsInstance = z.infer<typeof GdocsInstanceSchema>;
 export type PdfInstance = z.infer<typeof PdfInstanceSchema>;
 export type MailInstance = z.infer<typeof MailInstanceSchema>;
 export type ColumnsInstance = z.infer<typeof ColumnsInstanceSchema>;
+export type LookupInstance = z.infer<typeof LookupInstanceSchema>;

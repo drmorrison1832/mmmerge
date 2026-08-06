@@ -10,6 +10,7 @@ import { runGdocsInstance } from './modules/gdocs.js';
 import { runPdfInstance } from './modules/pdf.js';
 import { runMailInstance } from './modules/mail.js';
 import { runColumnsInstance } from './modules/columns.js';
+import { runLookupInstance } from './modules/lookup.js';
 import { ModuleError, type RowContext, type FileOutput, type MailOutput } from './rowContext.js';
 import type { PipelineDeps } from './deps.js';
 import { loggedStep } from './log.js';
@@ -240,6 +241,7 @@ function printSummary(
   profile: Config,
   report: ModuleReport,
   columnsWritten: number,
+  lookupEnriched: number,
   failure?: { rowNumber: number },
 ): void {
   const hasActive = <T extends { disable?: boolean }>(instances: T[]): boolean =>
@@ -250,6 +252,7 @@ function printSummary(
   console.log(`  Lignes traitées avec succès : ${processedRows}`);
   // Compté à partir de report (sorties réellement produites), pas processedRows × nombre d'instances actives :
   // un `filter` peut faire qu'une instance active ne s'exécute pas sur toutes les lignes traitées.
+  if (hasActive(profile.lookup)) console.log(`  Lignes enrichies via JSON : ${lookupEnriched}`);
   if (hasActive(profile.columns)) console.log(`  Colonnes renseignées : ${columnsWritten}`);
   if (hasActive(profile.gdocs)) console.log(`  Documents gDocs générés : ${countByPrefix(report, 'gdocs[')}`);
   if (hasActive(profile.pdf)) console.log(`  Fichiers PDF générés : ${countByPrefix(report, 'pdf[')}`);
@@ -299,6 +302,7 @@ function printVerboseManifest(report: ModuleReport, profile: Config): void {
 /** Liste "type[index]" des instances désactivées (disable: true), tous modules confondus, dans l'ordre du profil. */
 function listDisabledInstances(profile: Config): string[] {
   return [
+    ...profile.lookup.flatMap((instance, i) => (instance.disable ? [`lookup[${i}]`] : [])),
     ...profile.columns.flatMap((instance, i) => (instance.disable ? [`columns[${i}]`] : [])),
     ...profile.gdocs.flatMap((instance, i) => (instance.disable ? [`gdocs[${i}]`] : [])),
     ...profile.pdf.flatMap((instance, i) => (instance.disable ? [`pdf[${i}]`] : [])),
@@ -315,13 +319,14 @@ export async function processRow(
   profile: Config,
   deps: PipelineDeps,
   nextRowNumber: number | undefined,
-): Promise<{ success: boolean; outputs: RowContext['outputs']; columnsWritten: number }> {
+): Promise<{ success: boolean; outputs: RowContext['outputs']; columnsWritten: number; lookupEnriched: number }> {
   if (!deps.quiet) console.log(`Ligne ${row.rowNumber} : démarrage.`);
   await purgeRowOutputs(deps.drive, deps.sheetsWriter, row, profile, deps.quiet);
 
   const context: RowContext = { rowNumber: row.rowNumber, rawData: row.rawData, outputs: {} };
   let currentModuleName = '';
   let columnsWritten = 0;
+  let lookupEnriched = 0;
 
   const skipIfFiltered = (moduleName: string, instanceConfig: { filter?: Filter }): boolean => {
     if (matchesFilter(moduleName, instanceConfig.filter, context.rawData)) return false;
@@ -330,6 +335,15 @@ export async function processRow(
   };
 
   try {
+    for (const [index, instanceConfig] of profile.lookup.entries()) {
+      currentModuleName = `lookup[${index}]`;
+      if (instanceConfig.disable) continue;
+      if (skipIfFiltered(currentModuleName, instanceConfig)) continue;
+      const enriched = await loggedStep(deps.quiet, `Ligne ${row.rowNumber} : ${currentModuleName}`, () =>
+        runLookupInstance(currentModuleName, instanceConfig, context, deps),
+      );
+      if (enriched) lookupEnriched++;
+    }
     for (const [index, instanceConfig] of profile.columns.entries()) {
       currentModuleName = `columns[${index}]`;
       if (instanceConfig.disable) continue;
@@ -370,12 +384,12 @@ export async function processRow(
         : { module: currentModuleName, message: (err as Error).message };
     await deps.sheetsWriter.closeRow(context, profile);
     console.error(`Ligne ${row.rowNumber} : Erreur - ${context.error.module} - ${context.error.message}`);
-    return { success: false, outputs: context.outputs, columnsWritten };
+    return { success: false, outputs: context.outputs, columnsWritten, lookupEnriched };
   }
 
   await deps.sheetsWriter.closeRow(context, profile, nextRowNumber);
   console.log(`Ligne ${row.rowNumber} : Succès.`);
-  return { success: true, outputs: context.outputs, columnsWritten };
+  return { success: true, outputs: context.outputs, columnsWritten, lookupEnriched };
 }
 
 export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<number> {
@@ -450,21 +464,23 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
   const report: ModuleReport = new Map();
   let processedRows = 0;
   let columnsWritten = 0;
+  let lookupEnriched = 0;
   for (let i = 0; i < eligibleRows.length; i++) {
     const row = eligibleRows[i];
     const nextRow = eligibleRows[i + 1];
     const result = await processRow(row, profile, deps, nextRow?.rowNumber);
     recordOutputs(report, row.rowNumber, result.outputs);
     columnsWritten += result.columnsWritten;
+    lookupEnriched += result.lookupEnriched;
     if (!result.success) {
-      printSummary(processedRows, profile, report, columnsWritten, { rowNumber: row.rowNumber });
+      printSummary(processedRows, profile, report, columnsWritten, lookupEnriched, { rowNumber: row.rowNumber });
       if (cliFlags.verbose) printVerboseManifest(report, profile);
       return 1;
     }
     processedRows++;
   }
 
-  printSummary(processedRows, profile, report, columnsWritten);
+  printSummary(processedRows, profile, report, columnsWritten, lookupEnriched);
   if (cliFlags.verbose) printVerboseManifest(report, profile);
   return 0;
 }

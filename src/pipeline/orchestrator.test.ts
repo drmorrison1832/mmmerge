@@ -1,4 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import type { docs_v1, drive_v3, sheets_v4 } from 'googleapis';
 import {
   isStatusEligible,
@@ -39,6 +42,20 @@ function makeRow(overrides: Partial<SheetRow> = {}): SheetRow {
   return { rowNumber: 5, rawData: { Nom: 'Dupont' }, status: '', outputsRaw: '', ...overrides };
 }
 
+let tmpDirs: string[] = [];
+afterEach(() => {
+  for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
+  tmpDirs = [];
+});
+
+function writeJsonDataFile(content: unknown): string {
+  const dir = mkdtempSync(join(tmpdir(), 'mmmerge-orchestrator-test-'));
+  tmpDirs.push(dir);
+  const path = join(dir, 'data.json');
+  writeFileSync(path, JSON.stringify(content), 'utf-8');
+  return path;
+}
+
 function baseCliFlags(overrides: Partial<CliFlags> = {}): CliFlags {
   return {
     dryRun: false,
@@ -62,6 +79,7 @@ function baseProfile(overrides: Partial<Config> = {}): Config {
     pdf: [],
     mail: [],
     columns: [],
+    lookup: [],
     ...overrides,
   };
 }
@@ -342,6 +360,8 @@ function createDeps(overrides: Partial<PipelineDeps> = {}): {
     closeRow,
     resetOutputs: vi.fn(async () => {}),
     writeColumn: vi.fn(async () => {}),
+    hasColumn: vi.fn(() => true),
+    writeColumns: vi.fn(async () => {}),
   } as unknown as PipelineDeps['sheetsWriter'];
 
   const deps: PipelineDeps = {
@@ -524,16 +544,69 @@ describe('processRow', () => {
 
     expect(columnsWritten).toBe(2);
   });
+
+  it('exécute lookup[] avant columns[] et gdocs[], et rend les colonnes importées disponibles via {{...}}', async () => {
+    const { deps } = createDeps();
+    const dataFile = writeJsonDataFile({ Dupont: { Statut: 'Actif' } });
+    const profile = baseProfile({
+      lookup: [{ disable: false, file: dataFile, key_column: 'Nom' }],
+      columns: [{ disable: false, template: '{{Statut}} recalculé', output_column: 'StatutCalcule' }],
+      gdocs: [{ disable: false, template_id: 'template-id', output_folder_id: 'folder-id', output_filename: 'Doc {{StatutCalcule}}' }],
+    });
+
+    await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
+
+    expect(deps.sheetsWriter.writeColumns).toHaveBeenCalledWith(5, { Statut: 'Actif' });
+    expect(deps.drive.files.copy).toHaveBeenCalledWith(
+      expect.objectContaining({ requestBody: expect.objectContaining({ name: 'Doc Actif recalculé' }) }),
+    );
+  });
+
+  it('lookup[] respecte disable/filter comme les autres modules', async () => {
+    const { deps } = createDeps();
+    const dataFile = writeJsonDataFile({ Dupont: { Statut: 'Actif' } });
+    const profile = baseProfile({
+      lookup: [
+        { disable: true, file: dataFile, key_column: 'Nom' },
+        { disable: false, file: dataFile, key_column: 'Nom', filter: { match: 'all', conditions: [{ label: 'Nom', criterium: 'equals', value: 'Martin' }] } },
+      ],
+      gdocs: [],
+    });
+
+    const { success } = await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
+
+    expect(success).toBe(true);
+    expect(deps.sheetsWriter.writeColumns).not.toHaveBeenCalled();
+  });
+
+  it("retourne lookupEnriched = nombre de lignes effectivement enrichies (clé trouvée)", async () => {
+    const { deps } = createDeps();
+    const dataFile = writeJsonDataFile({ Dupont: { Statut: 'Actif' } });
+    const noMatchFile = writeJsonDataFile({ 'Personne d\'autre': { Statut: 'Actif' } });
+    const profile = baseProfile({
+      lookup: [
+        { disable: false, file: dataFile, key_column: 'Nom' },
+        { disable: false, file: noMatchFile, key_column: 'Nom' },
+      ],
+      gdocs: [],
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const { lookupEnriched } = await processRow(makeRow({ rawData: { Nom: 'Dupont' } }), profile, deps, undefined);
+
+    expect(lookupEnriched).toBe(1);
+    warnSpy.mockRestore();
+  });
 });
 
 describe('runPipeline (intégration)', () => {
-  function createMockSheetsClient(dataRows: string[][], hiddenRowNumbers: number[] = []) {
-    const allValues = [HEADERS, ...dataRows];
+  function createMockSheetsClient(dataRows: string[][], hiddenRowNumbers: number[] = [], headers: string[] = HEADERS) {
+    const allValues = [headers, ...dataRows];
     const cells = new Map<string, unknown[][]>();
 
     const get = vi.fn(async ({ range }: { range: string }) => {
       if (range === SHEET_TAB) return { data: { values: allValues } };
-      if (range === `${SHEET_TAB}!1:1`) return { data: { values: [HEADERS] } };
+      if (range === `${SHEET_TAB}!1:1`) return { data: { values: [headers] } };
       return { data: { values: cells.get(range) } };
     });
 
@@ -698,6 +771,38 @@ describe('runPipeline (intégration)', () => {
     const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
     expect(logged).toContain('Colonnes renseignées : 2');
     logSpy.mockRestore();
+  });
+
+  it('le résumé compte les lignes enrichies via lookup[], sans purger ni créer de colonne', async () => {
+    const { sheets, update } = createMockSheetsClient(
+      [
+        ['Dupont', '', '', ''],
+        ['Martin', '', '', ''],
+      ],
+      [],
+      [...HEADERS, 'Statut'],
+    );
+    const { drive } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const dataFile = writeJsonDataFile({ Dupont: { Statut: 'Actif' } });
+    const profile = baseProfile({
+      gdocs: [],
+      lookup: [{ disable: false, file: dataFile, key_column: 'Nom' }],
+    });
+
+    const code = await runPipeline(profile, baseCliFlags());
+
+    expect(code).toBe(0);
+    expect(update).not.toHaveBeenCalled(); // pas de création de colonne (hard error si absente, pas auto-création)
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('Lignes enrichies via JSON : 1'); // seul "Dupont" correspond à une clé du fichier
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 
   it('le résumé ne compte que les sorties réellement générées quand un filtre écarte certaines lignes', async () => {

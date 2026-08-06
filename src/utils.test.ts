@@ -34,6 +34,7 @@ describe('resolveInstanceByRef', () => {
     ],
     mail: [],
     columns: [],
+    lookup: [],
   };
 
   it('retrouve une instance existante par sa référence', () => {

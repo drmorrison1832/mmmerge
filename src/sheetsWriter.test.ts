@@ -190,6 +190,7 @@ const baseProfile: Config = {
   pdf: [{ disable: false, template_id: 't', output_folder: 'f', output_filename: 'n', name: 'Copie archives' }],
   mail: [],
   columns: [],
+  lookup: [],
 };
 
 describe('closeRow', () => {
@@ -280,6 +281,31 @@ describe('writeColumn', () => {
 
     expect(update).not.toHaveBeenCalled();
     expect(batchUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('hasColumn', () => {
+  it('retourne true pour une colonne existante, false sinon — sans jamais en créer', async () => {
+    const mock = createMockSheetsClient({ [`${SHEET_TAB}!1:1`]: [[...HEADERS, 'Statut']] });
+    const writer = await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB);
+
+    expect(writer.hasColumn('Statut')).toBe(true);
+    expect(writer.hasColumn('Inconnue')).toBe(false);
+    expect(mock.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('writeColumns', () => {
+  it('écrit plusieurs colonnes existantes en un seul appel batchUpdate', async () => {
+    const mock = createMockSheetsClient({ [`${SHEET_TAB}!1:1`]: [[...HEADERS, 'Statut', 'Type']] });
+    const writer = await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB);
+
+    await writer.writeColumns(5, { Statut: 'Actif', Type: 'CDD' });
+
+    expect(mock.cells.get(`${SHEET_TAB}!E5`)).toEqual([['Actif']]);
+    expect(mock.cells.get(`${SHEET_TAB}!F5`)).toEqual([['CDD']]);
+    expect(mock.cells.get(`${SHEET_TAB}!D5`)?.[0][0]).toMatch(DATE_TIME_FORMAT); // mmm_last_run mis à jour
+    expect(mock.batchUpdate).toHaveBeenCalledOnce();
   });
 });
 

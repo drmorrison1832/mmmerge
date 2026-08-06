@@ -251,4 +251,21 @@ export class SheetsWriter {
       { column: this.columns.mmm_last_run, rowNumber, value: now },
     ]);
   }
+
+  /** true si une colonne de ce titre existe déjà dans l'en-tête (aucune création). */
+  hasColumn(columnName: string): boolean {
+    return this.headers.includes(columnName);
+  }
+
+  /** Écrit plusieurs colonnes déjà existantes en un seul appel (module lookup[]) — voir hasColumn pour la validation préalable. */
+  async writeColumns(rowNumber: number, entries: Record<string, string>): Promise<void> {
+    const now = this.nowFormatted();
+    const cells: CellWrite[] = Object.entries(entries).map(([columnName, value]) => ({
+      column: this.headers.indexOf(columnName),
+      rowNumber,
+      value,
+    }));
+    cells.push({ column: this.columns.mmm_last_run, rowNumber, value: now });
+    await this.writeCells(cells);
+  }
 }

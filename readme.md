@@ -122,8 +122,9 @@ Points clés :
 - `gdocs`/`pdf` : chaque instance a **exactement une** des deux clés `output_folder` (chemin dynamique, balises autorisées, créé automatiquement selon `autoCreateFolders`) ou `output_folder_id` (ID Drive littéral).
 - `share` (gdocs uniquement) : partage du document généré — `email` et/ou `link`, permission `reader`/`commenter`/`editor`.
 - `mail` : corps via **exactement une** des deux clés `template_html` (inline) ou `template_html_path` (fichier externe). `attach` (`all`/`generated`/`external`/`none`) détermine les pièces jointes ; `generated` référence uniquement des instances `pdf[]` (un gDoc ne s'attache pas — utiliser `{{link:gdocs[i]}}` dans le corps pour un lien de consultation).
-- `columns` : calcule une valeur (`template`, même syntaxe de balise qu'ailleurs) et l'écrit dans une colonne du Sheet (`output_column`) — créée automatiquement si elle n'existe pas encore. S'exécute **avant** `gdocs`/`pdf`/`mail`, donc `{{NomComplet}}` (exemple ci-dessus) est utilisable comme une balise normale dans leurs templates, pour la même ligne (voir exemple dédié plus bas).
-- `gdocs[0]`, `pdf[1]`, `mail[0]`, `columns[0]`... sont les identifiants techniques de position — stables, utilisés dans les erreurs, `generated`, `{{link:...}}`. La clé `name` (optionnelle) n'est qu'un affichage, jamais une référence.
+- `columns` : calcule une valeur (`template`, même syntaxe de balise qu'ailleurs) et l'écrit dans une colonne du Sheet (`output_column`) — créée automatiquement si elle n'existe pas encore. S'exécute **avant** `gdocs`/`pdf`/`mail` (mais après `lookup`), donc `{{NomComplet}}` (exemple ci-dessus) est utilisable comme une balise normale dans leurs templates, pour la même ligne (voir exemple dédié plus bas).
+- `lookup` : enrichit une ligne à partir d'un fichier JSON externe (`file`), indexé par la valeur d'une colonne du Sheet (`key_column`) — voir exemple dédié plus bas. S'exécute **en premier**, avant même `columns`.
+- `gdocs[0]`, `pdf[1]`, `mail[0]`, `columns[0]`, `lookup[0]`... sont les identifiants techniques de position — stables, utilisés dans les erreurs, `generated`, `{{link:...}}`. La clé `name` (optionnelle) n'est qu'un affichage, jamais une référence.
 - `disable` (optionnel, tous types d'instance, défaut `false`) : désactive l'instance — ignorée à l'exécution, sans décaler les index des autres. Pratique pour désactiver temporairement un module en cours de configuration d'un profil. Une instance `mail[]` ne peut pas référencer (`generated`, `{{link:...}}`) une instance désactivée — erreur de configuration immédiate au chargement du profil, jamais au milieu d'une exécution.
 - `filter` (optionnel, tous types d'instance) : contrairement à `disable` (statique), exécute l'instance **seulement pour les lignes** dont les colonnes satisfont la condition configurée — voir exemple ci-dessous. Une instance filtrée pour une ligne donnée est simplement ignorée pour cette ligne, sans erreur.
 - `pdf[].output_filename` : l'extension `.pdf` est ajoutée automatiquement si absente (`CDDU {{Nom}}` devient `CDDU Dupont.pdf`) — insensible à la casse, jamais de doublon si `.pdf`/`.PDF` est déjà présent dans le nom résolu. Ne s'applique qu'au module `pdf` (un `gdocs[].output_filename` n'a pas d'extension à ajouter).
@@ -206,7 +207,36 @@ Points clés :
 }
 ```
 
-Si `NomComplet` n'existe pas déjà comme colonne du Sheet, elle est créée automatiquement (ajoutée en fin d'en-tête) — aucun flag à activer. `columns[]` s'exécute toujours en premier, avant `gdocs`/`pdf`/`mail`.
+Si `NomComplet` n'existe pas déjà comme colonne du Sheet, elle est créée automatiquement (ajoutée en fin d'en-tête) — aucun flag à activer. `columns[]` s'exécute avant `gdocs`/`pdf`/`mail` (mais après `lookup[]`, voir plus bas).
+
+**Enrichissement depuis un fichier JSON externe (`lookup`)** — chaque ligne du Sheet est complétée à partir d'un fichier JSON, en retrouvant son entrée via la valeur de la colonne `Matricule` :
+
+```json
+{
+  "lookup": [
+    {
+      "file": "data/employes.json",
+      "key_column": "Matricule"
+    }
+  ]
+}
+```
+
+Le fichier JSON associe une valeur de clé (celle de `key_column`, ici `Matricule`) à un objet colonne → valeur :
+
+```json
+{
+  "M-001": { "Statut": "Actif", "Type": "CDD" },
+  "M-002": { "Statut": "Inactif", "Type": "CDI" }
+}
+```
+
+Pour la ligne dont `Matricule` vaut `M-001`, les colonnes `Statut` et `Type` du Sheet sont mises à jour avec `Actif`/`CDD`. Points clés :
+- `s'exécute en premier`, avant `columns`/`gdocs`/`pdf`/`mail` : les colonnes renseignées sont utilisables via `{{Statut}}` dans les templates suivants, pour la même ligne.
+- Les colonnes cibles (`Statut`, `Type` ci-dessus — les clés du fichier JSON, pas de clé de config dédiée) **doivent déjà exister** dans le Sheet — contrairement à `columns[].output_column`/`link_column`, aucune création automatique ici : une colonne manquante est une erreur explicite (toutes les colonnes manquantes sont listées en une fois).
+- Une valeur de `key_column` sans correspondance dans le fichier JSON : la ligne est simplement ignorée pour cette instance, avec un avertissement — pas une erreur.
+- Une valeur JSON non textuelle (nombre, booléen) est convertie en chaîne (`42` → `"42"`).
+- Le fichier est relu à chaque ligne (comme `mail[].template_html_path`) — pas de mise en cache.
 
 **Lien de sortie visible directement dans le Sheet (`link_column`)** — l'URL du PDF généré est écrite dans la colonne `"Lien contrat"` (créée automatiquement si absente), en plus de `mmm_outputs` :
 
@@ -353,7 +383,7 @@ Lecture de l'en-tête du Sheet (onglet "Contrats")...
 
 `--quiet` revient à un affichage minimal (avertissements, résumé final, ligne en cause en cas d'erreur).
 
-Code de sortie `0` (succès, ou aucune ligne à traiter) ou `1` (erreur — le statut est toujours écrit sur le Sheet avant l'arrêt). En fin d'exécution (hors `--validate`/`--list`), un résumé est affiché : lignes traitées, colonnes renseignées, documents/PDF générés, emails composés, et la ligne en cause en cas d'arrêt sur erreur.
+Code de sortie `0` (succès, ou aucune ligne à traiter) ou `1` (erreur — le statut est toujours écrit sur le Sheet avant l'arrêt). En fin d'exécution (hors `--validate`/`--list`), un résumé est affiché : lignes traitées, lignes enrichies via JSON, colonnes renseignées, documents/PDF générés, emails composés, et la ligne en cause en cas d'arrêt sur erreur.
 
 ### `--verbose` : détail des documents générés
 
