@@ -53,6 +53,15 @@ describe('loadConfig', () => {
     removeFixture('__test-json2columns-invalid-json');
     removeFixture('__test-json2columns-bad-shape');
     removeFixture('__test-json2columns-bad-leaf');
+    removeFixture('__test-output-subfolder-valide');
+    removeFixture('__test-output-subfolder-requires-id');
+    removeFixture('__test-output-subfolder-vide');
+    removeFixture('__test-output-folder-both');
+    removeFixture('__test-external-folder-both');
+    removeFixture('__test-external-folder-id-valide');
+    removeFixture('__test-external-subfolder-requires-id');
+    removeFixture('__test-external-subfolder-vide');
+    removeFixture('__test-external-no-folder');
   });
 
   it('charge le profil "multiModuleExemple" et applique les valeurs par défaut absentes du fichier', () => {
@@ -346,5 +355,130 @@ describe('loadConfig', () => {
       }),
     );
     expect(() => loadConfig('__test-json2columns-bad-leaf', [])).toThrow(/valeur non simple/);
+  });
+
+  function baseMailFields(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      to: '{{Email}}',
+      subject: 's',
+      template_html: '<p>x</p>',
+      draft_only: true,
+      attach: 'external',
+      external: ['fichier.pdf'],
+      ...overrides,
+    };
+  }
+
+  it('"output_subfolder" (gdocs/pdf) est accepté avec output_folder_id, chargé tel quel', () => {
+    writeFixture(
+      '__test-output-subfolder-valide',
+      JSON.stringify({
+        ...baseProfileFields(),
+        pdf: [
+          {
+            template_id: 't',
+            output_folder_id: 'f',
+            output_subfolder: '{{date_debut:date[format:yyyy-MM]}}',
+            output_filename: 'n',
+          },
+        ],
+      }),
+    );
+    const config = loadConfig('__test-output-subfolder-valide', []);
+    expect(config.pdf[0].output_folder_id).toBe('f');
+    expect(config.pdf[0].output_subfolder).toBe('{{date_debut:date[format:yyyy-MM]}}');
+  });
+
+  it('"output_subfolder" est rejeté avec output_folder (sans output_folder_id)', () => {
+    writeFixture(
+      '__test-output-subfolder-requires-id',
+      JSON.stringify({
+        ...baseProfileFields(),
+        pdf: [{ template_id: 't', output_folder: 'Contrats', output_subfolder: '{{Annee}}', output_filename: 'n' }],
+      }),
+    );
+    expect(() => loadConfig('__test-output-subfolder-requires-id', [])).toThrow(/output_subfolder.*output_folder_id/);
+  });
+
+  it('"output_subfolder" ne peut pas être une chaîne vide', () => {
+    writeFixture(
+      '__test-output-subfolder-vide',
+      JSON.stringify({
+        ...baseProfileFields(),
+        pdf: [{ template_id: 't', output_folder_id: 'f', output_subfolder: '', output_filename: 'n' }],
+      }),
+    );
+    expect(() => loadConfig('__test-output-subfolder-vide', [])).toThrow(/output_subfolder.*chaîne vide/);
+  });
+
+  it('"output_folder" et "output_folder_id" fournis simultanément sont rejetés', () => {
+    writeFixture(
+      '__test-output-folder-both',
+      JSON.stringify({
+        ...baseProfileFields(),
+        pdf: [{ template_id: 't', output_folder: 'Contrats', output_folder_id: 'f', output_filename: 'n' }],
+      }),
+    );
+    expect(() => loadConfig('__test-output-folder-both', [])).toThrow(/Exactement une des deux/);
+  });
+
+  it('"externalFolder" et "externalFolderId" fournis simultanément sont rejetés', () => {
+    writeFixture(
+      '__test-external-folder-both',
+      JSON.stringify({
+        ...baseProfileFields(),
+        mail: [baseMailFields({ externalFolder: 'Paies', externalFolderId: 'f' })],
+      }),
+    );
+    expect(() => loadConfig('__test-external-folder-both', [])).toThrow(/mutuellement exclusifs/);
+  });
+
+  it('"externalFolderId" seul (sans externalFolder) est accepté, avec ou sans externalSubfolder', () => {
+    writeFixture(
+      '__test-external-folder-id-valide',
+      JSON.stringify({
+        ...baseProfileFields(),
+        mail: [baseMailFields({ externalFolderId: 'f', externalSubfolder: '{{Mois}}' })],
+      }),
+    );
+    const config = loadConfig('__test-external-folder-id-valide', []);
+    expect(config.mail[0].externalFolderId).toBe('f');
+    expect(config.mail[0].externalSubfolder).toBe('{{Mois}}');
+    expect(config.mail[0].externalFolder).toBeUndefined();
+  });
+
+  it('"externalSubfolder" est rejeté avec externalFolder (sans externalFolderId)', () => {
+    writeFixture(
+      '__test-external-subfolder-requires-id',
+      JSON.stringify({
+        ...baseProfileFields(),
+        mail: [baseMailFields({ externalFolder: 'Paies', externalSubfolder: '{{Mois}}' })],
+      }),
+    );
+    expect(() => loadConfig('__test-external-subfolder-requires-id', [])).toThrow(
+      /externalSubfolder.*externalFolderId/,
+    );
+  });
+
+  it('"externalSubfolder" ne peut pas être une chaîne vide', () => {
+    writeFixture(
+      '__test-external-subfolder-vide',
+      JSON.stringify({
+        ...baseProfileFields(),
+        mail: [baseMailFields({ externalFolderId: 'f', externalSubfolder: '' })],
+      }),
+    );
+    expect(() => loadConfig('__test-external-subfolder-vide', [])).toThrow(/externalSubfolder.*chaîne vide/);
+  });
+
+  it('"external" non vide sans externalFolder ni externalFolderId est rejeté', () => {
+    writeFixture(
+      '__test-external-no-folder',
+      JSON.stringify({
+        ...baseProfileFields(),
+        mail: [baseMailFields()],
+      }),
+    );
+    expect(() => loadConfig('__test-external-no-folder', [])).toThrow(/externalFolder ou externalFolderId/);
   });
 });

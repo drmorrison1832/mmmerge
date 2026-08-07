@@ -29,6 +29,8 @@ export type CliFlags = {
   list: boolean;
   /** Numéros de ligne (numérotation visuelle Sheets, ligne 1 = en-tête) demandés via --lines. */
   lines?: number[];
+  /** Désactive l'arrêt de lecture à la première ligne entièrement vide (comportement par défaut). */
+  ignoreEmptyRows: boolean;
 };
 
 /** Clé = identifiant technique d'instance ('gdocs[0]', 'pdf[1]', 'mail[0]', ...), dans l'ordre où les lignes ont été traitées. */
@@ -50,6 +52,7 @@ async function readSheetRows(
   sheetId: string,
   sheetTabName: string,
   quiet: boolean,
+  ignoreEmptyRows: boolean,
 ): Promise<SheetRow[]> {
   const { data } = await loggedStep(quiet, 'Lecture des lignes du Sheet', () =>
     sheets.spreadsheets.values.get({
@@ -70,6 +73,14 @@ async function readSheetRows(
     headers.forEach((header, colIndex) => {
       rawData[header] = String(rowValues[colIndex] ?? '');
     });
+
+    if (!ignoreEmptyRows && Object.values(rawData).every((value) => value === '')) {
+      console.log(
+        `Ligne ${i + 1} vide : arrêt de la lecture (utilisez --ignore-empty-rows pour continuer au-delà).`,
+      );
+      break;
+    }
+
     rows.push({
       rowNumber: i + 1, // ligne 1 = en-tête (specs.md §1)
       rawData,
@@ -163,11 +174,14 @@ export function determineEligibleRows(rows: SheetRow[], hiddenRowNumbers: Set<nu
 }
 
 /**
- * Purge les fichiers gdocs[i]/pdf[i] qui vont être régénérés dans cette même exécution (ou dont
- * l'instance a été retirée du profil, orpheline), puis réinitialise mmm_outputs — en conservant
- * telles quelles les entrées d'une instance désactivée ou dont le filtre ne correspond pas à
- * cette ligne : ces instances ne s'exécutent pas cette fois-ci, leur sortie n'a donc rien à voir
- * avec une régénération et ne doit ni être purgée, ni disparaître de mmm_outputs.
+ * Purge les fichiers gdocs[i]/pdf[i] qui vont être régénérés dans cette même exécution, puis
+ * réinitialise mmm_outputs — en conservant telles quelles les entrées d'une instance désactivée,
+ * dont le filtre ne correspond pas à cette ligne, ou qui ne résout à aucune instance de CE profil :
+ * ces entrées ne sont pas concernées par une régénération de cette exécution et ne doivent ni être
+ * purgées, ni disparaître de mmm_outputs. Une clé non résolue n'est PAS traitée comme orpheline
+ * (instance retirée du profil) : mmm_outputs est partagé par toutes les lignes d'un même Sheet, et
+ * un autre profil ciblant le même Sheet peut très bien y avoir écrit cette clé — impossible de
+ * distinguer les deux cas ici, donc on ne purge jamais par défaut (voir specs.md §2).
  */
 export async function purgeRowOutputs(
   drive: PipelineDeps['drive'],
@@ -190,23 +204,25 @@ export async function purgeRowOutputs(
   for (const [key, value] of Object.entries(existingOutputs)) {
     const instance = resolveInstanceByRef(key, profile);
 
-    if (instance) {
-      let willRunThisRow: boolean;
-      try {
-        willRunThisRow = !instance.disable && matchesFilter(key, instance.filter, row.rawData);
-      } catch {
-        // Filtre non évaluable ici (ex: colonne absente) : par sécurité, on ne perd rien — la même
-        // erreur sera levée normalement par skipIfFiltered lors de l'exécution de la ligne.
-        willRunThisRow = false;
-      }
-      if (!willRunThisRow) {
-        preserved[key] = value; // désactivée, ou filtre non satisfait pour cette ligne : ni purgée, ni perdue
-        continue;
-      }
+    if (!instance) {
+      preserved[key] = value; // ne résout à aucune instance de ce profil : jamais purgée, jamais perdue
+      continue;
     }
 
-    // L'instance va régénérer cette sortie dans cette même exécution, ou a été retirée du profil
-    // (orpheline, plus jamais référencée) : dans les deux cas, rien à conserver ici.
+    let willRunThisRow: boolean;
+    try {
+      willRunThisRow = !instance.disable && matchesFilter(key, instance.filter, row.rawData);
+    } catch {
+      // Filtre non évaluable ici (ex: colonne absente) : par sécurité, on ne perd rien — la même
+      // erreur sera levée normalement par skipIfFiltered lors de l'exécution de la ligne.
+      willRunThisRow = false;
+    }
+    if (!willRunThisRow) {
+      preserved[key] = value; // désactivée, ou filtre non satisfait pour cette ligne : ni purgée, ni perdue
+      continue;
+    }
+
+    // L'instance va régénérer cette sortie dans cette même exécution : la précédente doit être purgée.
     if (/^(gdocs|pdf)\[\d+\]$/.test(key)) {
       const url = (value as FileOutput | undefined)?.url;
       if (url) {
@@ -220,8 +236,8 @@ export async function purgeRowOutputs(
         }
       }
     }
-    // mail[i] : jamais purgé (specs.md §2, §3) — l'entrée est simplement abandonnée (regénérée si
-    // l'instance s'exécute cette ligne, ou orpheline si elle a été retirée du profil).
+    // mail[i] : jamais purgé (specs.md §2, §3) — l'entrée est simplement abandonnée ici quand
+    // l'instance va s'exécuter cette ligne (regénérée juste après par updateOutput).
   }
 
   await sheetsWriter.resetOutputs(row.rowNumber, preserved);
@@ -424,7 +440,13 @@ export async function runPipeline(profile: Config, cliFlags: CliFlags): Promise<
     return 0;
   }
 
-  const rows = await readSheetRows(sheets, profile.sheetId, profile.sheetTabName, cliFlags.quiet);
+  const rows = await readSheetRows(
+    sheets,
+    profile.sheetId,
+    profile.sheetTabName,
+    cliFlags.quiet,
+    cliFlags.ignoreEmptyRows,
+  );
   const hiddenRowNumbers = await readHiddenRowNumbers(sheets, profile.sheetId, profile.sheetTabName, cliFlags.quiet);
   const eligibleRows = determineEligibleRows(rows, hiddenRowNumbers, cliFlags);
 

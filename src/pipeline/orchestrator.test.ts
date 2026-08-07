@@ -65,6 +65,7 @@ function baseCliFlags(overrides: Partial<CliFlags> = {}): CliFlags {
     validate: false,
     initColumns: false,
     list: false,
+    ignoreEmptyRows: false,
     ...overrides,
   };
 }
@@ -187,24 +188,43 @@ function createMockSheetsWriter() {
 }
 
 describe('purgeRowOutputs', () => {
-  it('met à la corbeille les fichiers gdocs[i]/pdf[i] référencés (instances actives ou orphelines), jamais mail[i]', async () => {
+  it('met à la corbeille un gdocs[i]/pdf[i] référencé, actif et sur le point de régénérer cette ligne', async () => {
+    const update = vi.fn(async () => ({ data: {} }));
+    const drive = { files: { update } } as unknown as drive_v3.Drive;
+    const sheetsWriter = createMockSheetsWriter();
+    const profile = baseProfile({
+      gdocs: [{ disable: false, template_id: 't', output_folder_id: 'f', output_filename: 'n' }],
+    });
+
+    const outputs = {
+      'gdocs[0]': { filename: 'x', url: 'https://docs.google.com/document/d/GDOC-ID/edit' },
+    };
+    const row = makeRow({ outputsRaw: JSON.stringify(outputs) });
+
+    await purgeRowOutputs(drive, sheetsWriter, row, profile);
+
+    expect(update).toHaveBeenCalledWith({ fileId: 'GDOC-ID', requestBody: { trashed: true } });
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, {});
+  });
+
+  it("ne purge jamais une clé qui ne résout à aucune instance de CE profil (orpheline, ou écrite par un autre profil sur le même Sheet)", async () => {
     const update = vi.fn(async () => ({ data: {} }));
     const drive = { files: { update } } as unknown as drive_v3.Drive;
     const sheetsWriter = createMockSheetsWriter();
 
     const outputs = {
-      'gdocs[0]': { filename: 'x', url: 'https://docs.google.com/document/d/GDOC-ID/edit' },
-      'pdf[0]': { filename: 'y', url: 'https://drive.google.com/file/d/PDF-ID/view' }, // orpheline : profil.pdf est vide
-      'mail[0]': { url: 'https://mail.google.com/mail/u/0/#drafts/DRAFT-ID' }, // orpheline aussi
+      'gdocs[0]': { filename: 'x', url: 'https://docs.google.com/document/d/GDOC-ID/edit' }, // profil.gdocs est vide
+      'pdf[0]': { filename: 'y', url: 'https://drive.google.com/file/d/PDF-ID/view' }, // profil.pdf est vide
+      'mail[0]': { url: 'https://mail.google.com/mail/u/0/#drafts/DRAFT-ID' }, // profil.mail est vide
     };
     const row = makeRow({ outputsRaw: JSON.stringify(outputs) });
+    const emptyProfile = baseProfile({ gdocs: [] });
 
-    await purgeRowOutputs(drive, sheetsWriter, row, baseProfile());
+    await purgeRowOutputs(drive, sheetsWriter, row, emptyProfile);
 
-    expect(update).toHaveBeenCalledWith({ fileId: 'GDOC-ID', requestBody: { trashed: true } });
-    expect(update).toHaveBeenCalledWith({ fileId: 'PDF-ID', requestBody: { trashed: true } });
-    expect(update).toHaveBeenCalledTimes(2); // pas mail[0]
-    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, {});
+    expect(update).not.toHaveBeenCalled();
+    expect(sheetsWriter.resetOutputs).toHaveBeenCalledWith(5, outputs);
   });
 
   it("continue et journalise si la mise à la corbeille d'un fichier échoue", async () => {
@@ -981,6 +1001,52 @@ describe('runPipeline (intégration)', () => {
 
     expect(code).toBe(0);
     expect(logSpy.mock.calls.map((call) => call[0])).toContain('Aucune ligne éligible.');
+    logSpy.mockRestore();
+  });
+
+  it('arrête la lecture à la première ligne entièrement vide (comportement par défaut)', async () => {
+    const { sheets } = createMockSheetsClient([
+      ['Dupont', '', '', ''],
+      ['', '', '', ''],
+      ['Martin', '', '', ''],
+    ]);
+    const { drive } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const code = await runPipeline(baseProfile(), baseCliFlags({ list: true }));
+
+    expect(code).toBe(0);
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).toContain('Ligne 3 vide');
+    expect(logged).toContain('--ignore-empty-rows');
+    expect(logged).toContain('1 ligne(s) éligible(s)');
+    expect(logged).toContain('Ligne 2');
+    expect(logged).not.toContain('Ligne 4'); // jamais lue, au-delà de la ligne vide
+    logSpy.mockRestore();
+  });
+
+  it('--ignore-empty-rows : continue la lecture au-delà d\'une ligne vide', async () => {
+    const { sheets } = createMockSheetsClient([
+      ['Dupont', '', '', ''],
+      ['', '', '', ''],
+      ['Martin', '', '', ''],
+    ]);
+    const { drive } = createMockDrive();
+    mockState.sheetsClient = sheets;
+    mockState.driveClient = drive;
+    mockState.docsClient = createMockDocs().docs;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const code = await runPipeline(baseProfile(), baseCliFlags({ list: true, ignoreEmptyRows: true }));
+
+    expect(code).toBe(0);
+    const logged = logSpy.mock.calls.map((call) => call[0]).join('\n');
+    expect(logged).not.toContain('vide : arrêt de la lecture');
+    expect(logged).toContain('Ligne 2');
+    expect(logged).toContain('Ligne 4');
     logSpy.mockRestore();
   });
 

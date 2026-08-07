@@ -307,6 +307,16 @@ describe('writeColumns', () => {
     expect(mock.cells.get(`${SHEET_TAB}!D5`)?.[0][0]).toMatch(DATE_TIME_FORMAT); // mmm_last_run mis à jour
     expect(mock.batchUpdate).toHaveBeenCalledOnce();
   });
+
+  it('écrit un nombre/booléen sans le convertir en texte (évite une réinterprétation selon la locale du Sheet)', async () => {
+    const mock = createMockSheetsClient({ [`${SHEET_TAB}!1:1`]: [[...HEADERS, 'Statut', 'Type']] });
+    const writer = await SheetsWriter.create(mock.sheets, 'sheet-id', SHEET_TAB);
+
+    await writer.writeColumns(5, { Statut: 123.45, Type: true });
+
+    expect(mock.cells.get(`${SHEET_TAB}!E5`)).toEqual([[123.45]]);
+    expect(mock.cells.get(`${SHEET_TAB}!F5`)).toEqual([[true]]);
+  });
 });
 
 describe('dry-run', () => {

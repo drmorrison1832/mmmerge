@@ -7,8 +7,8 @@ import { readFileSync } from 'node:fs';
 
 const FilterConditionSchema = z.object({
   label: z.string(),
-  /** Enum à un seul membre pour l'instant — extensible (contains, not_equals...) sans casser le format existant. */
-  criterium: z.enum(['equals']),
+  /** Extensible sans casser le format existant (ex: contains). */
+  criterium: z.enum(['equals', 'not_equals']),
   value: z.string(),
 });
 
@@ -56,6 +56,8 @@ const FileModuleFieldsSchema = z
     template_link: z.string().optional(),
     output_folder: z.string().optional(),
     output_folder_id: z.string().optional(),
+    /** Sous-chemin dynamique résolu/créé sous output_folder_id — incompatible avec output_folder (voir superRefine ci-dessous). */
+    output_subfolder: z.string().optional(),
     output_filename: z.string(),
     /** Écrit l'URL de sortie dans cette colonne (créée si absente) — nom choisi par l'utilisateur. */
     link_column: z.string().optional(),
@@ -68,10 +70,24 @@ const outputFolderXorMessage = {
   message: 'Exactement une des deux clés output_folder / output_folder_id doit être fournie.',
 };
 
-export const PdfInstanceSchema = FileModuleFieldsSchema.refine(
-  outputFolderXorRefine,
-  outputFolderXorMessage,
-);
+/** Une chaîne vide n'est jamais un chemin/segment valide — mieux vaut l'erreur immédiate qu'un "résolu en chaîne vide" au runtime. */
+const nonEmptyIfPresent = (value: string | undefined): boolean => value === undefined || value.trim().length > 0;
+
+const outputSubfolderRequiresIdRefine = (i: { output_folder_id?: string; output_subfolder?: string }): boolean =>
+  !i.output_subfolder || Boolean(i.output_folder_id);
+const outputSubfolderRequiresIdMessage = {
+  message:
+    'output_subfolder ne peut être utilisé qu\'avec output_folder_id (avec output_folder, ajoutez le segment dynamique directement dans le chemin).',
+};
+const outputSubfolderNotEmptyRefine = (i: { output_subfolder?: string }): boolean =>
+  nonEmptyIfPresent(i.output_subfolder);
+const outputSubfolderNotEmptyMessage = {
+  message: 'output_subfolder ne peut pas être une chaîne vide — omettez la clé plutôt que de la laisser vide.',
+};
+
+export const PdfInstanceSchema = FileModuleFieldsSchema.refine(outputFolderXorRefine, outputFolderXorMessage)
+  .refine(outputSubfolderRequiresIdRefine, outputSubfolderRequiresIdMessage)
+  .refine(outputSubfolderNotEmptyRefine, outputSubfolderNotEmptyMessage);
 
 const ShareConfigSchema = z
   .object({
@@ -94,7 +110,10 @@ const ShareConfigSchema = z
 
 export const GdocsInstanceSchema = FileModuleFieldsSchema.extend({
   share: ShareConfigSchema,
-}).refine(outputFolderXorRefine, outputFolderXorMessage);
+})
+  .refine(outputFolderXorRefine, outputFolderXorMessage)
+  .refine(outputSubfolderRequiresIdRefine, outputSubfolderRequiresIdMessage)
+  .refine(outputSubfolderNotEmptyRefine, outputSubfolderNotEmptyMessage);
 
 export const MailInstanceSchema = z
   .object({
@@ -107,6 +126,9 @@ export const MailInstanceSchema = z
     attach: z.enum(['all', 'generated', 'external', 'none']),
     generated: z.array(z.string()).optional().default([]),
     externalFolder: z.string().optional(),
+    externalFolderId: z.string().optional(),
+    /** Sous-chemin dynamique résolu sous externalFolderId — incompatible avec externalFolder (voir refines ci-dessous). */
+    externalSubfolder: z.string().optional(),
     external: z.array(z.string()).optional().default([]),
     /** Écrit l'URL de sortie dans cette colonne (créée si absente) — nom choisi par l'utilisateur. */
     link_column: z.string().optional(),
@@ -127,8 +149,18 @@ export const MailInstanceSchema = z
   .refine((mail) => !(mail.attach === 'none' && (mail.generated.length > 0 || mail.external.length > 0)), {
     message: 'attach: "none" nécessite generated ET external vides.',
   })
-  .refine((mail) => mail.external.length === 0 || Boolean(mail.externalFolder), {
-    message: 'externalFolder est requis dès que external est utilisé.',
+  .refine((mail) => !(mail.externalFolder && mail.externalFolderId), {
+    message: 'externalFolder et externalFolderId sont mutuellement exclusifs — fournissez l\'un ou l\'autre, pas les deux.',
+  })
+  .refine((mail) => mail.external.length === 0 || Boolean(mail.externalFolder) || Boolean(mail.externalFolderId), {
+    message: 'externalFolder ou externalFolderId est requis dès que external est utilisé.',
+  })
+  .refine((mail) => !mail.externalSubfolder || Boolean(mail.externalFolderId), {
+    message:
+      'externalSubfolder ne peut être utilisé qu\'avec externalFolderId (avec externalFolder, ajoutez le segment dynamique directement dans le chemin).',
+  })
+  .refine((mail) => nonEmptyIfPresent(mail.externalSubfolder), {
+    message: 'externalSubfolder ne peut pas être une chaîne vide — omettez la clé plutôt que de la laisser vide.',
   });
 
 export const ProfileSchema = z

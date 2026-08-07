@@ -46,7 +46,8 @@ function formatErrorStatus(error: { module: string; message: string }, profile: 
   return `Erreur: ${error.module}${name ? ` ("${name}")` : ''} - ${error.message}`;
 }
 
-type CellWrite = { column: number; rowNumber: number; value: string };
+type CellValue = string | number | boolean;
+type CellWrite = { column: number; rowNumber: number; value: CellValue };
 
 export class SheetsWriter {
   private constructor(
@@ -243,7 +244,7 @@ export class SheetsWriter {
   }
 
   /** Écrit une valeur calculée (module columns[]) dans une colonne libre, créée si besoin. */
-  async writeColumn(rowNumber: number, columnName: string, value: string): Promise<void> {
+  async writeColumn(rowNumber: number, columnName: string, value: CellValue): Promise<void> {
     const column = await this.resolveOrCreateColumn(columnName);
     const now = this.nowFormatted();
     await this.writeCells([
@@ -258,7 +259,7 @@ export class SheetsWriter {
   }
 
   /** Écrit plusieurs colonnes déjà existantes en un seul appel (module json2columns[]) — voir hasColumn pour la validation préalable. */
-  async writeColumns(rowNumber: number, entries: Record<string, string>): Promise<void> {
+  async writeColumns(rowNumber: number, entries: Record<string, CellValue>): Promise<void> {
     const now = this.nowFormatted();
     const cells: CellWrite[] = Object.entries(entries).map(([columnName, value]) => ({
       column: this.headers.indexOf(columnName),

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { resolveFolderPath } from './folderResolver.js';
+import { resolveFolderPath, resolveConfiguredFolderId } from './folderResolver.js';
 
 type MockFolder = { id: string; name: string; parentId: string };
 
@@ -98,5 +98,79 @@ describe('resolveFolderPath', () => {
     await expect(resolveFolderPath('gdocs[0]', drive, '  ', {}, 'd/M/yyyy', true, new Map())).rejects.toThrow(
       /vide/,
     );
+  });
+
+  it('descend depuis un dossier de départ donné (startParentId) plutôt que la racine', async () => {
+    const { drive } = createMockDrive([{ id: 'annee-id', name: '2026', parentId: 'container-id' }]);
+
+    const result = await resolveFolderPath('pdf[0]', drive, '2026', {}, 'd/M/yyyy', true, new Map(), true, 'container-id');
+    expect(result).toBe('annee-id');
+  });
+
+  it('la mise en cache distingue deux dossiers de départ différents pour le même chemin relatif', async () => {
+    const { drive, list } = createMockDrive([
+      { id: 'a-2026', name: '2026', parentId: 'container-a' },
+      { id: 'b-2026', name: '2026', parentId: 'container-b' },
+    ]);
+    const cache = new Map<string, string>();
+
+    const fromA = await resolveFolderPath('pdf[0]', drive, '2026', {}, 'd/M/yyyy', true, cache, true, 'container-a');
+    const fromB = await resolveFolderPath('pdf[0]', drive, '2026', {}, 'd/M/yyyy', true, cache, true, 'container-b');
+
+    expect(fromA).toBe('a-2026');
+    expect(fromB).toBe('b-2026'); // pas "a-2026" depuis le cache, malgré le même chemin relatif "2026"
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('resolveConfiguredFolderId', () => {
+  it('retourne folderId directement, sans aucun appel Drive, quand aucun subfolder n\'est configuré', async () => {
+    const { drive, list, create } = createMockDrive([]);
+
+    const result = await resolveConfiguredFolderId(
+      'pdf[0]',
+      drive,
+      { folderId: 'fixed-id' },
+      {},
+      'd/M/yyyy',
+      true,
+      new Map(),
+    );
+
+    expect(result).toBe('fixed-id');
+    expect(list).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('résout subfolder sous folderId quand les deux sont configurés', async () => {
+    const { drive } = createMockDrive([{ id: 'mois-id', name: '2026-08', parentId: 'fixed-id' }]);
+
+    const result = await resolveConfiguredFolderId(
+      'pdf[0]',
+      drive,
+      { folderId: 'fixed-id', subfolder: '2026-08' },
+      {},
+      'd/M/yyyy',
+      true,
+      new Map(),
+    );
+
+    expect(result).toBe('mois-id');
+  });
+
+  it('résout folder comme un chemin complet depuis la racine quand folderId est absent', async () => {
+    const { drive } = createMockDrive([{ id: 'contrats-id', name: 'Contrats', parentId: 'root' }]);
+
+    const result = await resolveConfiguredFolderId(
+      'pdf[0]',
+      drive,
+      { folder: 'Contrats' },
+      {},
+      'd/M/yyyy',
+      true,
+      new Map(),
+    );
+
+    expect(result).toBe('contrats-id');
   });
 });

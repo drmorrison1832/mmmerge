@@ -70,13 +70,16 @@ describe('runJson2ColumnsInstance', () => {
     expect(context.rawData.Type).toBe('CDD');
   });
 
-  it('convertit les valeurs non-chaînes en chaînes (nombre, booléen)', async () => {
+  it('préserve le type nombre/booléen vers Sheets, mais expose des chaînes via rawData', async () => {
     const { deps, writeColumns } = createDeps();
     const config = baseConfig({ file: writeJsonFixture({ 'Dupont-1': { Anciennete: 5, Actif: true } }) });
+    const context = baseContext();
 
-    await runJson2ColumnsInstance('json2columns[0]', config, baseContext(), deps);
+    await runJson2ColumnsInstance('json2columns[0]', config, context, deps);
 
-    expect(writeColumns).toHaveBeenCalledWith(5, { Anciennete: '5', Actif: 'true' });
+    expect(writeColumns).toHaveBeenCalledWith(5, { Anciennete: 5, Actif: true });
+    expect(context.rawData.Anciennete).toBe('5');
+    expect(context.rawData.Actif).toBe('true');
   });
 
   it("ignore la ligne (avec un avertissement) si la clé n'est pas trouvée dans le fichier", async () => {

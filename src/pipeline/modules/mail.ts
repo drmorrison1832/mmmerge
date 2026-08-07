@@ -9,7 +9,7 @@ import { ModuleError } from '../rowContext.js';
 import type { MailInstance } from '../../config/schema.js';
 import { renderTemplateString } from '../../templateEngine.js';
 import { extractDriveFileId, resolveInstanceByRef } from '../../utils.js';
-import { resolveFolderPath } from '../../folderResolver.js';
+import { resolveConfiguredFolderId } from '../../folderResolver.js';
 import type { PipelineDeps } from '../deps.js';
 import { loggedStep } from '../log.js';
 import { buildRawMimeMessage, toBase64Url } from './mimeMessage.js';
@@ -29,12 +29,16 @@ async function resolveExternalFiles(
   deps: PipelineDeps,
   context: RowContext,
   externalTemplates: string[],
-  externalFolderTemplate: string,
+  externalFolderConfig: { externalFolder?: string; externalFolderId?: string; externalSubfolder?: string },
 ): Promise<ResolvedAttachment[]> {
-  const folderId = await resolveFolderPath(
+  const folderId = await resolveConfiguredFolderId(
     moduleName,
     deps.drive,
-    externalFolderTemplate,
+    {
+      folder: externalFolderConfig.externalFolder,
+      folderId: externalFolderConfig.externalFolderId,
+      subfolder: externalFolderConfig.externalSubfolder,
+    },
     context.rawData,
     deps.defaultDateFormat,
     false, // externalFolder n'est jamais soumis à autoCreateFolders (specs.md §3)
@@ -109,7 +113,7 @@ async function resolveAttachments(
 
   const fromExternal =
     config.attach === 'all' || config.attach === 'external'
-      ? await resolveExternalFiles(moduleName, deps, context, config.external, config.externalFolder!)
+      ? await resolveExternalFiles(moduleName, deps, context, config.external, config)
       : [];
 
   return [...fromGenerated, ...fromExternal];

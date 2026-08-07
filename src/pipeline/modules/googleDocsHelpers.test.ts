@@ -106,6 +106,19 @@ describe('resolveOutputFolderId', () => {
 
     expect(id).toBe('existing-folder');
   });
+
+  it('résout output_subfolder sous output_folder_id (pas sous la racine) quand les deux sont fournis', async () => {
+    const { drive, list } = createMockDrive();
+    const id = await resolveOutputFolderId(
+      'gdocs[0]',
+      { ...baseDeps, drive },
+      { output_folder_id: 'literal-id', output_subfolder: 'Mois' },
+      {},
+    );
+
+    expect(id).toBe('existing-folder');
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ q: expect.stringContaining("'literal-id' in parents") }));
+  });
 });
 
 describe('driveRole', () => {

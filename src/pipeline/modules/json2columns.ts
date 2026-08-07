@@ -49,20 +49,22 @@ export async function runJson2ColumnsInstance(
     return false;
   }
 
-  const values: Record<string, string> = {};
+  const rawValues: Record<string, string> = {};
+  const writeValues: Record<string, string | number | boolean> = {};
   for (const [column, value] of Object.entries(entry)) {
-    values[column] = String(value);
+    rawValues[column] = String(value);
+    writeValues[column] = typeof value === 'number' || typeof value === 'boolean' ? value : String(value);
   }
 
-  const missingColumns = Object.keys(values).filter((column) => !deps.sheetsWriter.hasColumn(column));
+  const missingColumns = Object.keys(rawValues).filter((column) => !deps.sheetsWriter.hasColumn(column));
   if (missingColumns.length > 0) {
     throw new ModuleError(moduleName, `Colonne(s) introuvable(s) dans le Sheet : ${missingColumns.join(', ')}.`);
   }
 
-  for (const [column, value] of Object.entries(values)) {
+  for (const [column, value] of Object.entries(rawValues)) {
     context.rawData[column] = value;
   }
 
-  await deps.sheetsWriter.writeColumns(context.rowNumber, values);
+  await deps.sheetsWriter.writeColumns(context.rowNumber, writeValues);
   return true;
 }

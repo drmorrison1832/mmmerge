@@ -66,10 +66,15 @@ export async function resolveFolderPath(
   autoCreate: boolean,
   cache: Map<string, string>,
   quiet = true,
+  startParentId: string = DRIVE_ROOT,
 ): Promise<string> {
   const resolvedPath = renderTemplateString(moduleName, pathTemplate, rawData, {}, defaultDateFormat);
 
-  const cached = cache.get(resolvedPath);
+  // Le point de départ fait partie de la clé : deux instances partant d'ID différents peuvent
+  // résoudre le même chemin relatif (ex: même nom de sous-dossier "2026-08" sous deux dossiers
+  // conteneurs distincts) sans que ce soit le même dossier Drive.
+  const cacheKey = `${startParentId}:${resolvedPath}`;
+  const cached = cache.get(cacheKey);
   if (cached) return cached;
 
   const segments = resolvedPath
@@ -81,11 +86,44 @@ export async function resolveFolderPath(
     throw new ModuleError(moduleName, `Chemin de dossier "${pathTemplate}" résolu en chaîne vide.`);
   }
 
-  let parentId = DRIVE_ROOT;
+  let parentId = startParentId;
   for (const segment of segments) {
     parentId = await resolveOrCreateSegment(moduleName, drive, segment, parentId, autoCreate, quiet);
   }
 
-  cache.set(resolvedPath, parentId);
+  cache.set(cacheKey, parentId);
   return parentId;
+}
+
+/**
+ * Résout un dossier configuré via un couple (chemin de noms depuis la racine) XOR (ID fixe,
+ * avec un sous-chemin dynamique optionnel résolu sous cet ID) — factorisation partagée par
+ * gdocs/pdf (output_folder/output_folder_id/output_subfolder) et mail (externalFolder/
+ * externalFolderId/externalSubfolder), mêmes règles de validation statique (schema.ts).
+ */
+export async function resolveConfiguredFolderId(
+  moduleName: string,
+  drive: drive_v3.Drive,
+  config: { folder?: string; folderId?: string; subfolder?: string },
+  rawData: Record<string, string>,
+  defaultDateFormat: string,
+  autoCreate: boolean,
+  cache: Map<string, string>,
+  quiet = true,
+): Promise<string> {
+  if (config.folderId) {
+    if (!config.subfolder) return config.folderId;
+    return resolveFolderPath(
+      moduleName,
+      drive,
+      config.subfolder,
+      rawData,
+      defaultDateFormat,
+      autoCreate,
+      cache,
+      quiet,
+      config.folderId,
+    );
+  }
+  return resolveFolderPath(moduleName, drive, config.folder!, rawData, defaultDateFormat, autoCreate, cache, quiet);
 }

@@ -10,7 +10,17 @@ import { parseLines, HELP_TEMPLATES } from './cliFlags.js';
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const args = mri(argv, {
-    boolean: ['dry-run', 'force', 'validate', 'quiet', 'verbose', 'init-columns', 'list', 'help-templates'],
+    boolean: [
+      'dry-run',
+      'force',
+      'validate',
+      'quiet',
+      'verbose',
+      'init-columns',
+      'list',
+      'help-templates',
+      'ignore-empty-rows',
+    ],
   });
 
   if (args['help-templates']) {
@@ -35,6 +45,7 @@ async function main(): Promise<void> {
     initColumns: Boolean(args['init-columns']),
     list: Boolean(args.list),
     lines: parseLines(args.lines),
+    ignoreEmptyRows: Boolean(args['ignore-empty-rows']),
   };
 
   const config = loadConfig(profileName, argv);

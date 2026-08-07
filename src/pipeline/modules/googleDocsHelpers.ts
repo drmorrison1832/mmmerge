@@ -4,11 +4,11 @@
  */
 import type { docs_v1, drive_v3 } from 'googleapis';
 import { resolveTemplateTags, renderTemplateString, type ResolvedTag } from '../../templateEngine.js';
-import { resolveFolderPath } from '../../folderResolver.js';
+import { resolveConfiguredFolderId } from '../../folderResolver.js';
 import { loggedStep } from '../log.js';
 import type { PipelineDeps } from '../deps.js';
 
-type OutputFolderConfig = { output_folder?: string; output_folder_id?: string };
+type OutputFolderConfig = { output_folder?: string; output_folder_id?: string; output_subfolder?: string };
 
 export async function resolveOutputFolderId(
   moduleName: string,
@@ -16,11 +16,10 @@ export async function resolveOutputFolderId(
   config: OutputFolderConfig,
   rawData: Record<string, string>,
 ): Promise<string> {
-  if (config.output_folder_id) return config.output_folder_id;
-  return resolveFolderPath(
+  return resolveConfiguredFolderId(
     moduleName,
     deps.drive,
-    config.output_folder!,
+    { folder: config.output_folder, folderId: config.output_folder_id, subfolder: config.output_subfolder },
     rawData,
     deps.defaultDateFormat,
     deps.autoCreateFolders,

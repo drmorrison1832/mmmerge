@@ -207,6 +207,47 @@ describe('runMailInstance', () => {
     expect(mailOutputOf(context, 'mail[0]').attachments).toEqual(['piece.pdf']);
   });
 
+  it('résout un fichier "external" via externalFolderId, sans recherche de dossier par nom', async () => {
+    const { drive, list } = createMockDrive([
+      { id: 'ext-file-id', name: 'piece.pdf', parentId: 'fixed-folder-id', mimeType: 'application/pdf', content: 'PIECE' },
+    ]);
+    const { deps } = createDeps({ drive });
+    const context = baseContext();
+
+    await runMailInstance(
+      'mail[0]',
+      baseConfig({ attach: 'external', external: ['piece.pdf'], externalFolderId: 'fixed-folder-id' }),
+      context,
+      deps,
+    );
+
+    expect(mailOutputOf(context, 'mail[0]').attachments).toEqual(['piece.pdf']);
+    expect(list).toHaveBeenCalledTimes(1); // un seul appel : la recherche du fichier, aucune résolution de dossier
+  });
+
+  it('résout un fichier "external" via externalSubfolder sous externalFolderId', async () => {
+    const { drive } = createMockDrive([
+      { id: 'mois-id', name: '2026-08', parentId: 'fixed-folder-id', mimeType: 'application/vnd.google-apps.folder' },
+      { id: 'ext-file-id', name: 'piece.pdf', parentId: 'mois-id', mimeType: 'application/pdf', content: 'PIECE' },
+    ]);
+    const { deps } = createDeps({ drive });
+    const context = baseContext();
+
+    await runMailInstance(
+      'mail[0]',
+      baseConfig({
+        attach: 'external',
+        external: ['piece.pdf'],
+        externalFolderId: 'fixed-folder-id',
+        externalSubfolder: '2026-08',
+      }),
+      context,
+      deps,
+    );
+
+    expect(mailOutputOf(context, 'mail[0]').attachments).toEqual(['piece.pdf']);
+  });
+
   it('lève une erreur si le fichier externe est introuvable', async () => {
     const { drive } = createMockDrive([
       { id: 'folder-id', name: 'Justificatifs', parentId: 'root', mimeType: 'application/vnd.google-apps.folder' },

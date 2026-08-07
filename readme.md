@@ -119,7 +119,7 @@ Chaque profil est un fichier JSON dans `configs/<nom-du-profil>.json` (sous-doss
 ```
 
 Points clés :
-- `gdocs`/`pdf` : chaque instance a **exactement une** des deux clés `output_folder` (chemin dynamique, balises autorisées, créé automatiquement selon `autoCreateFolders`) ou `output_folder_id` (ID Drive littéral).
+- `gdocs`/`pdf` : chaque instance a **exactement une** des deux clés `output_folder` (chemin dynamique, balises autorisées, créé automatiquement selon `autoCreateFolders`) ou `output_folder_id` (ID Drive littéral). `output_folder_id` accepte en plus une clé optionnelle `output_subfolder` (chemin dynamique, balises autorisées, résolu/créé **sous** ce dossier plutôt que depuis la racine) — pratique pour un dossier conteneur stable par ID avec un classement dynamique en dessous (ex: `"output_folder_id": "1DriveFolderId..."`, `"output_subfolder": "{{date_debut:date[format:yyyy-MM]}}"`). `output_subfolder` n'a pas de sens avec `output_folder` (chemin complet) — ajoutez-y simplement le segment directement.
 - `share` (gdocs uniquement) : partage du document généré — `email` et/ou `link`, permission `reader`/`commenter`/`editor`.
 - `mail` : corps via **exactement une** des deux clés `template_html` (inline) ou `template_html_path` (fichier externe). `attach` (`all`/`generated`/`external`/`none`) détermine les pièces jointes ; `generated` référence uniquement des instances `pdf[]` (un gDoc ne s'attache pas — utiliser `{{link:gdocs[i]}}` dans le corps pour un lien de consultation).
 - `columns` : calcule une valeur (`template`, même syntaxe de balise qu'ailleurs) et l'écrit dans une colonne du Sheet (`output_column`) — créée automatiquement si elle n'existe pas encore. S'exécute **avant** `gdocs`/`pdf`/`mail` (mais après `json2columns`), donc `{{NomComplet}}` (exemple ci-dessus) est utilisable comme une balise normale dans leurs templates, pour la même ligne (voir exemple dédié plus bas).
@@ -185,7 +185,7 @@ Points clés :
 }
 ```
 
-`match` combine les conditions : `all` (toutes vraies), `any` (au moins une), `none` (aucune). Une instance `mail[]` qui référence (`generated`) une instance filtrée reçoit un message d'erreur explicite si le filtre n'a pas été satisfait pour la ligne en cours.
+`match` combine les conditions : `all` (toutes vraies), `any` (au moins une), `none` (aucune). `criterium` accepte `equals` ou `not_equals` (sa négation exacte, ex: `{ "label": "Type", "criterium": "not_equals", "value": "CDD" }` pour tout sauf CDD) — les deux insensibles à la casse, sans normalisation des espaces. Une instance `mail[]` qui référence (`generated`) une instance filtrée reçoit un message d'erreur explicite si le filtre n'a pas été satisfait pour la ligne en cours.
 
 **Colonne calculée (`columns`), réutilisée dans un nom de fichier** — `NomComplet` est calculé une fois puis utilisé tel quel par l'instance `pdf[0]`, sans dupliquer `{{Prenom}} {{Nom}}` dans chaque `output_filename` :
 
@@ -235,7 +235,7 @@ Pour la ligne dont `Matricule` vaut `M-001`, les colonnes `Statut` et `Type` du 
 - `s'exécute en premier`, avant `columns`/`gdocs`/`pdf`/`mail` : les colonnes renseignées sont utilisables via `{{Statut}}` dans les templates suivants, pour la même ligne.
 - Les colonnes cibles (`Statut`, `Type` ci-dessus — les clés du fichier JSON, pas de clé de config dédiée) **doivent déjà exister** dans le Sheet — contrairement à `columns[].output_column`/`link_column`, aucune création automatique ici : une colonne manquante est une erreur explicite (toutes les colonnes manquantes sont listées en une fois).
 - Une valeur de `key_column` sans correspondance dans le fichier JSON : la ligne est simplement ignorée pour cette instance, avec un avertissement — pas une erreur.
-- Une valeur JSON non textuelle (nombre, booléen) est convertie en chaîne (`42` → `"42"`).
+- Une valeur JSON numérique ou booléenne (`42`, `true`) est écrite dans le Sheet avec son type d'origine (nombre/booléen, pas du texte) — évite qu'un nombre décimal soit mal interprété selon la locale du Sheet. Elle reste disponible sous forme de chaîne via `{{...}}` dans les templates suivants.
 - Le fichier est relu à chaque ligne (comme `mail[].template_html_path`) — pas de mise en cache.
 
 **Lien de sortie visible directement dans le Sheet (`link_column`)** — l'URL du PDF généré est écrite dans la colonne `"Lien contrat"` (créée automatiquement si absente), en plus de `mmm_outputs` :
@@ -268,6 +268,16 @@ Pour la ligne dont `Matricule` vaut `M-001`, les colonnes `Statut` et `Type` du 
       "external": ["Attestation {{Nom}}.pdf"]
     }
   ]
+}
+```
+
+`externalFolder` (chemin dynamique depuis la racine) et `externalFolderId` (ID Drive littéral) sont mutuellement exclusifs — l'un des deux est requis dès que `external` est utilisé. Comme pour `output_folder_id`, `externalFolderId` accepte une clé optionnelle `externalSubfolder` (chemin dynamique résolu sous ce dossier) :
+
+```json
+{
+  "externalFolderId": "1DriveFolderIdXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "externalSubfolder": "{{Annee:date[format:yyyy]}}",
+  "external": ["Attestation {{Nom}}.pdf"]
 }
 ```
 
@@ -386,7 +396,10 @@ node dist/cli.js <profil> [options]
 | `--list` | Affiche les lignes éligibles (numéro + statut actuel) sans exécuter le pipeline — pour vérifier avant un lancement réel. |
 | `--quiet` | Supprime le logging de progression en temps réel (actif par défaut) — aucun effet sur le comportement. |
 | `--verbose` | Affiche en fin d'exécution le détail ligne par ligne de chaque document/email généré, groupé par instance (voir exemple ci-dessous). Indépendant de `--quiet`, qui ne concerne que le logging de progression. |
+| `--ignore-empty-rows` | Désactive l'arrêt automatique à la première ligne entièrement vide (voir ci-dessous) : lit et traite normalement les lignes situées après. |
 | `--help-templates` | Affiche la syntaxe des balises (voir section précédente) et quitte — utilisable sans profil. |
+
+Par défaut, la lecture du Sheet s'arrête à la première ligne entièrement vide (aucune colonne renseignée, y compris `mmm_status`) — cette ligne et tout ce qui suit sont ignorés, comme si le tableau s'arrêtait là. Pratique pour garder des données de brouillon ou des notes sous le tableau réel sans que `mmmerge` essaie de les traiter. Un message indique la ligne où la lecture s'est arrêtée ; `--ignore-empty-rows` désactive ce comportement et traite le Sheet dans son intégralité, comme avant l'introduction de cette option.
 
 Par défaut, chaque appel réseau (Sheets/Drive/Docs/Gmail) est annoncé en console avant d'être lancé, puis confirmé par une ligne `→ OK` une fois terminé — utile pour savoir précisément où en est une exécution longue, ou ce qui est en cours si le script semble bloqué :
 

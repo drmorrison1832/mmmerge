@@ -1,7 +1,17 @@
 # Architecture Technique : "MMMerge"
 
-> **Dernière mise à jour :** 2026-08-06 — v31
-> **Résumé des derniers changements :** Réorganisation de `configs/` : les profils d'exemple (v30) déplacés sous `configs/exemples/`, les fichiers JSON compagnons de `json2columns` sous `configs/data/json2columns/`, les corps HTML de `mail[].template_html_path` sous `configs/html/`. Aucun changement à `loader.ts`/`readProfileFile` : `join(PROJECT_ROOT, 'configs', \`${profileName}.json\`)` accepte déjà nativement un `profileName` contenant un séparateur (`exemples/multiModuleExemple`), le `join` construisant simplement le chemin imbriqué — seuls les appelants (tests, exemples eux-mêmes) changent. `EXAMPLE_PROFILES` (`exampleProfiles.test.ts`) et les 3 tests `loader.test.ts` repointés en v30 utilisent désormais le préfixe `exemples/`. Les références internes `json2columns[].file`/`mail[].template_html_path` des profils déplacés, qui pointaient vers les anciens chemins plats, ont été corrigées vers leurs nouveaux emplacements (un déplacement de fichier ne réécrit pas le contenu qui le référence).
+> **Dernière mise à jour :** 2026-08-06 — v36
+> **Résumé des derniers changements :** Nouvelle clé `output_subfolder` (gdocs/pdf, §3 §6 §7) et son équivalent mail `externalFolderId`/`externalSubfolder` (§3 §6 §7) : comblent le manque entre `output_folder` (chemin de noms complet, depuis la racine) et `output_folder_id` (ID fixe, sans sous-chemin possible), jusqu'ici mutuellement exclusifs sans intermédiaire. `folderResolver.ts#resolveFolderPath` gagne un neuvième paramètre optionnel `startParentId` (défaut `'root'`) pour descendre depuis un ID connu plutôt que la racine ; sa clé de cache inclut désormais `startParentId` (corrige une collision de cache potentielle entre deux dossiers conteneurs différents partageant un même nom de sous-dossier). Nouvelle fonction exportée `resolveConfiguredFolderId` factorise la règle "chemin XOR (ID + sous-chemin optionnel résolu sous cet ID)", partagée telle quelle par `googleDocsHelpers.ts#resolveOutputFolderId` et `mail.ts#resolveExternalFiles` (signature générique `folder`/`folderId`/`subfolder`, chaque appelant mappe ses propres noms de champs). Validation statique (`schema.ts`) : `output_subfolder`/`externalSubfolder` requièrent respectivement `output_folder_id`/`externalFolderId` (erreur explicite avec `output_folder`/`externalFolder`), et rejettent une chaîne vide littérale au chargement du profil plutôt que de laisser échouer la première ligne traitée au runtime (`resolveFolderPath` lève déjà "chemin résolu en chaîne vide", mais seulement pour un `{{tag}}` qui se résout vide à l'exécution — une chaîne vide statique est, elle, toujours une erreur de configuration, détectable immédiatement). `externalFolder`/`externalFolderId` mutuellement exclusifs, comme `output_folder`/`output_folder_id`. Tests ajoutés : `loader.test.ts` (9, validation statique), `folderResolver.test.ts` (5, `startParentId` + `resolveConfiguredFolderId`), `googleDocsHelpers.test.ts` (1), `mail.test.ts` (2).
+>
+> **Résumé v35 (2026-08-06) :** Nouveau critère `not_equals` sur `FilterConditionSchema.criterium` (`config/schema.ts`, était `z.enum(['equals'])`, devient `z.enum(['equals', 'not_equals'])`) — extension anticipée depuis v21 (commentaire déjà présent dans le code). `filterEngine.ts#evaluateCondition` calcule désormais `isEqual` (même comparaison qu'avant : insensible à la casse, sans normalisation d'espaces) puis retourne `condition.criterium === 'not_equals' ? !isEqual : isEqual` — un seul point de calcul de l'égalité, la négation ne duplique aucune logique de comparaison. Se combine librement avec `equals` dans les mêmes `conditions[]`, sous n'importe quel `match` (`all`/`any`/`none`) : aucun changement à `matchesFilter`, qui reste agnostique du `criterium` de chaque condition. Tests ajoutés dans `filterEngine.test.ts` : négation simple, insensibilité à la casse identique à `equals`, combinaison avec `equals` sous `match: 'all'`.
+>
+> **Résumé v34 (2026-08-06) :** Correction d'un bug de perte de données réel (§3, `purgeRowOutputs`, `orchestrator.ts`) : lancer un profil pouvait mettre à la corbeille un fichier gDocs/PDF généré par un **autre** profil ciblant le même Sheet. Cause : `mmm_outputs` est une cellule du Sheet, partagée entre tous les profils qui le traitent, mais la branche `if (instance) { ... }` de `purgeRowOutputs` ne s'exécutait que quand `resolveInstanceByRef(key, profile)` résolvait — sinon la clé tombait dans le chemin par défaut ("orpheline, purge normale"), sans distinction possible entre "instance retirée de ce profil" et "clé écrite par un autre profil". Correctif : la clause est inversée en un premier `if (!instance) { preserved[key] = value; continue; }` explicite — une clé non résolue est désormais **toujours** conservée telle quelle, jamais purgée, quelle qu'en soit la raison. `resolveInstanceByRef` (`utils.ts`) est inchangé ; seule la décision prise par `purgeRowOutputs` sur son résultat `undefined` change. Contrepartie assumée et documentée (specs.md §2) : le nettoyage automatique d'une instance réellement retirée d'un profil ne se fait plus tout seul — à faire manuellement sur Drive si besoin. Tests `orchestrator.test.ts` mis à jour : l'ancien test combinant "instance active" et "orpheline" dans un seul cas est scindé en deux (une clé active qui régénère est toujours purgée ; une clé non résolue — `gdocs[0]`/`pdf[0]`/`mail[0]` sur un profil dont les trois tableaux sont vides — n'est plus jamais purgée).
+>
+> **Résumé v33 (2026-08-06) :** Nouveau comportement par défaut de `readSheetRows` (`orchestrator.ts`) : la boucle de lecture (`for (let i = 1; i < values.length; i++)`) s'arrête (`break`) dès qu'une ligne a toutes ses colonnes vides (`Object.values(rawData).every((value) => value === '')`), avant même de la pousser dans `rows` — cette ligne et toutes les suivantes ne sont donc ni lues ni traitées, comme si le tableau se terminait là. Un `console.log` (non filtré par `--quiet`, comme "Aucune ligne éligible.") indique le numéro de la ligne où la lecture s'est arrêtée. Nouveau flag `--ignore-empty-rows` (`cli.ts`, ajouté à la liste `boolean` de `mri`) désactive ce comportement — `CliFlags` gagne un champ `ignoreEmptyRows: boolean` (obligatoire, câblé partout où `CliFlags` est construit : `cli.ts`, `orchestrator.test.ts#baseCliFlags`), transmis à `readSheetRows` comme nouveau paramètre. Cas particulier volontairement non traité spécialement : une ligne vide gardée via `--ignore-empty-rows` reste éligible au traitement normal (son `mmm_status` vide passe `isStatusEligible`), exactement le comportement d'avant l'introduction de cette option — `--ignore-empty-rows` restaure ce comportement plutôt que d'ajouter un filtrage supplémentaire.
+>
+> **Résumé v32 (2026-08-06) :** `json2columns` écrivait systématiquement du texte vers Sheets (`String(value)`), y compris pour les nombres/booléens du fichier JSON source — en mode d'écriture `RAW`, une chaîne comme `"123.45"` reste du texte brut, jamais analysée selon la locale du Sheet (le problème n'était donc pas la locale, mais la perte du type numérique avant même l'envoi). Correctif : `CellWrite.value`/`writeColumn`/`writeColumns` (`sheetsWriter.ts`) élargis de `string` à `string | number | boolean`, pour que le type d'origine traverse jusqu'au `batchUpdate` sans passer par une conversion texte — Sheets stocke alors une valeur JSON numérique/booléenne comme un nombre/booléen natif, sans aucune analyse de texte donc sans ambiguïté de locale. `pipeline/modules/json2columns.ts` calcule désormais deux versions de chaque valeur lue dans le fichier JSON : `rawValues` (toujours `String(value)`, pour `context.rawData`, consommé par templates/filtres qui attendent des `string`) et `writeValues` (type préservé pour `number`/`boolean`, coercé en chaîne sinon), et passe `writeValues` à `sheetsWriter.writeColumns`. Aucun changement pour `columns[].output_column`/`link_column`/`gdocs`/`pdf`/`mail` (`writeColumn`), qui continuent de fournir des chaînes — seul le type accepté est élargi, pas leur usage actuel.
+>
+> **Résumé v31 (2026-08-06) :** Réorganisation de `configs/` : les profils d'exemple (v30) déplacés sous `configs/exemples/`, les fichiers JSON compagnons de `json2columns` sous `configs/data/json2columns/`, les corps HTML de `mail[].template_html_path` sous `configs/html/`. Aucun changement à `loader.ts`/`readProfileFile` : `join(PROJECT_ROOT, 'configs', \`${profileName}.json\`)` accepte déjà nativement un `profileName` contenant un séparateur (`exemples/multiModuleExemple`), le `join` construisant simplement le chemin imbriqué — seuls les appelants (tests, exemples eux-mêmes) changent. `EXAMPLE_PROFILES` (`exampleProfiles.test.ts`) et les 3 tests `loader.test.ts` repointés en v30 utilisent désormais le préfixe `exemples/`. Les références internes `json2columns[].file`/`mail[].template_html_path` des profils déplacés, qui pointaient vers les anciens chemins plats, ont été corrigées vers leurs nouveaux emplacements (un déplacement de fichier ne réécrit pas le contenu qui le référence).
 >
 > **Résumé v30 (2026-08-06) :** Nouveau fichier `src/config/exampleProfiles.test.ts` : `it.each` sur onze noms de profil, vérifie juste que `loadConfig(name, [])` ne lève pas — traite les profils d'exemple comme de la documentation vivante (readme.md) plutôt que de simples fixtures, pour détecter une dérive du schéma. Les onze profils, tous sous `configs/` : une paire Basic/Advanced par module (`gdocsExempleBasic`/`Advanced`, `pdfExemple*`, `mailExemple*`, `columnsExemple*`, `json2columnsExemple*`) — chaque `Advanced` a plusieurs instances et la plupart des clés optionnelles, mais reste volontairement mono-module : `mail[].attach: "generated"` et `{{link:...}}` exigent une vraie instance `gdocs[]`/`pdf[]` dans le **même** profil (vérifié statiquement par `superRefine`), donc absents des profils mono-module et réservés à `multiModuleExemple.json`, qui fait collaborer les cinq modules sur une ligne (`json2columns` → `columns` → `gdocs`/`pdf` → `mail`). `json2columnsExemple*`/`multiModuleExemple` référencent des fichiers de données JSON compagnons (`json2columnsData*.json`, chemins relatifs à `process.cwd()` — même limitation déjà connue que `mail[].template_html_path`, non résolue via `PROJECT_ROOT`) ; `mailExempleAdvanced` référence `mailExempleAdvancedBody.html` pour illustrer `template_html_path`. `configs/exemple.json` (utilisé jusqu'ici par 3 tests de `loader.test.ts`) est retiré ; ces 3 tests pointent désormais vers `multiModuleExemple` (mêmes assertions : `gdocs`/`pdf`/`mail` de longueur 1 chacun, `autoCreateFolders`/`defaultDateFormat` par défaut).
 >
@@ -167,28 +177,30 @@ Avant d'exécuter la moindre instance, l'orchestrateur lit `mmm_outputs` tel qu'
 
 ```ts
 const instance = resolveInstanceByRef(key, profile);
-if (instance) {
-  let willRunThisRow: boolean;
-  try {
-    willRunThisRow = !instance.disable && matchesFilter(key, instance.filter, row.rawData);
-  } catch {
-    willRunThisRow = false; // filtre non évaluable ici : préserver par sécurité, l'erreur réapparaîtra via skipIfFiltered
-  }
-  if (!willRunThisRow) {
-    preserved[key] = value; // désactivée, ou filtre non satisfait pour cette ligne : ni purgée, ni perdue
-    continue;
-  }
+if (!instance) {
+  preserved[key] = value; // ne résout à aucune instance de CE profil : jamais purgée, jamais perdue (v34)
+  continue;
 }
-// va se régénérer cette ligne, ou orpheline (instance retirée du profil) : purge normale (gdocs/pdf uniquement)
+let willRunThisRow: boolean;
+try {
+  willRunThisRow = !instance.disable && matchesFilter(key, instance.filter, row.rawData);
+} catch {
+  willRunThisRow = false; // filtre non évaluable ici : préserver par sécurité, l'erreur réapparaîtra via skipIfFiltered
+}
+if (!willRunThisRow) {
+  preserved[key] = value; // désactivée, ou filtre non satisfait pour cette ligne : ni purgée, ni perdue
+  continue;
+}
+// instance trouvée, active, va se régénérer cette ligne : purge normale (gdocs/pdf uniquement)
 ```
 
-- Instance introuvable dans le profil actuel (retirée depuis la dernière exécution) → orpheline : fichier `gdocs[i]`/`pdf[i]` envoyé à la corbeille via `extractDriveFileId` + `files.update(fileId, { trashed: true })`, avertissement loggé ; entrée `mail[i]` simplement abandonnée (jamais de purge physique pour mail — specs.md §2, §6).
-- Instance trouvée, active, filtre satisfait (ou absent) → elle va se régénérer cette ligne : même traitement que ci-dessus (purge de l'ancien fichier avant que le nouveau ne soit créé juste après).
+- Instance introuvable dans le profil **en cours d'exécution** → **ni purgée, ni perdue** (v34, corrige un bug de perte de données réel) : l'entrée est recopiée telle quelle dans `preserved`. Avant ce correctif, ce cas était traité comme "orpheline" (instance retirée du profil) et purgée sans condition — ce qui est correct pour une instance réellement retirée d'un profil, mais `mmm_outputs` est une cellule du Sheet, pas un espace de noms par profil : si un second profil traite les mêmes lignes (ex: un profil de génération gDocs et un profil de lookup JSON tous deux pointés sur le même `sheetId`/`sheetTabName`), ses propres clés (`gdocs[0]`, `pdf[0]`...) ne résolvent jamais dans le profil en cours d'exécution — indiscernable, avec l'ancienne logique, d'une instance réellement retirée. Résultat observé : lancer le profil B trashait un fichier valide généré par le profil A. `resolveInstanceByRef` n'a pas et ne peut pas avoir cette information (il ne connaît que `profile`, jamais "quel profil a écrit cette clé"), donc la seule décision sûre par défaut est de ne jamais purger une clé non résolue. Contrepartie assumée : le nettoyage automatique d'une instance réellement retirée d'un profil doit désormais se faire manuellement sur Drive — cas jugé plus rare et moins coûteux qu'une suppression accidentelle inter-profils.
+- Instance trouvée, active, filtre satisfait (ou absent) → elle va se régénérer cette ligne : fichier `gdocs[i]`/`pdf[i]` envoyé à la corbeille via `extractDriveFileId` + `files.update(fileId, { trashed: true })`, avertissement loggé (purge de l'ancien avant que le nouveau ne soit créé juste après) ; entrée `mail[i]` simplement abandonnée de `preserved` (jamais de purge physique pour mail — specs.md §2, §6), régénérée juste après par `updateOutput`.
 - Instance trouvée mais `disable: true`, ou `filter` non satisfait pour cette ligne (ou non évaluable — colonne absente) → **ni purgée, ni perdue** : l'entrée est recopiée telle quelle dans `preserved`, sans aucun appel `files.update`. Corrige un bug de perte de données (v24) : avant ce correctif, ce cas n'était pas distingué et suivait le chemin "orpheline/va régénérer", trashant un fichier qui ne serait jamais recréé.
 
 `preserved` devient le nouveau contenu de `mmm_outputs`, écrit via `sheetsWriter.resetOutputs(row.rowNumber, preserved)` (mmm_last_run mis à jour dans le même appel) avant que la génération ne commence — remplace l'ancien `resetOutputs(rowNumber)` qui écrivait toujours le littéral `'{}'`, sans possibilité de rien conserver.
 
-Cette purge par instance remplace une vérification "juste avant régénération" globale et aveugle : elle garantit qu'une instance retirée du profil ne laisse pas de résidu orphelin, qu'une instance sur le point de régénérer ne laisse pas de doublon, et — depuis v24 — qu'une instance simplement mise en pause ou temporairement hors filtre ne perd rien.
+Cette purge par instance remplace une vérification "juste avant régénération" globale et aveugle : elle garantit qu'une instance sur le point de régénérer ne laisse pas de doublon, qu'une instance simplement mise en pause ou temporairement hors filtre ne perd rien (v24), et — depuis v34 — qu'une clé appartenant à un autre profil partageant le même Sheet n'est jamais prise pour un résidu à nettoyer.
 
 ### Exécution séquentielle
 
@@ -204,7 +216,9 @@ function evaluateCondition(moduleName, condition, rawData) {
   if (!(condition.label in rawData)) {
     throw new ModuleError(moduleName, `Filtre : colonne "${condition.label}" absente du tableau`);
   }
-  return rawData[condition.label].toLowerCase() === condition.value.toLowerCase(); // insensible à la casse, espaces non normalisés
+  // insensible à la casse, espaces non normalisés
+  const isEqual = rawData[condition.label].toLowerCase() === condition.value.toLowerCase();
+  return condition.criterium === 'not_equals' ? !isEqual : isEqual;
 }
 
 function matchesFilter(moduleName, filter, rawData) {
@@ -432,14 +446,14 @@ async function resolveAttachments(
     : [];
 
   const fromExternal = config.attach === 'all' || config.attach === 'external'
-    ? await resolveExternalFiles(moduleName, deps, context, config.external, config.externalFolder!)
+    ? await resolveExternalFiles(moduleName, deps, context, config.external, config)
     : [];
 
   return [...fromGenerated, ...fromExternal];
 }
 ```
 
-`resolveExternalFiles` : résout `externalFolder` via `folderResolver.resolveFolderPath` (autoCreate forcé à `false`), résout chaque entrée de `external` via `renderTemplateString`, détecte les doublons de noms résolus (`Erreur` immédiate si deux entrées se résolvent au même nom), puis un `drive.files.list` par nom recherché — enveloppé par `loggedStep` (le nom du fichier recherché est inclus dans le message pour rester non ambigu si plusieurs recherches se suivent). 0 résultat, plusieurs résultats, ou doublon résolu → `Erreur`. `ResolvedAttachment` (type interne à `mail.ts`) = `{ fileId, filename, mimeType }` — `mimeType` toujours `'application/pdf'` pour une pièce jointe `generated` (un PDF, par construction), déduit du fichier Drive lui-même pour une pièce jointe `external`.
+`resolveExternalFiles` (signature élargie : reçoit désormais l'objet `{ externalFolder?, externalFolderId?, externalSubfolder? }` plutôt qu'une seule chaîne de chemin) : résout le dossier via `folderResolver.resolveConfiguredFolderId` (autoCreate forcé à `false`, y compris pour `externalSubfolder` — voir §7), résout chaque entrée de `external` via `renderTemplateString`, détecte les doublons de noms résolus (`Erreur` immédiate si deux entrées se résolvent au même nom), puis un `drive.files.list` par nom recherché — enveloppé par `loggedStep` (le nom du fichier recherché est inclus dans le message pour rester non ambigu si plusieurs recherches se suivent). 0 résultat, plusieurs résultats, ou doublon résolu → `Erreur`. `ResolvedAttachment` (type interne à `mail.ts`) = `{ fileId, filename, mimeType }` — `mimeType` toujours `'application/pdf'` pour une pièce jointe `generated` (un PDF, par construction), déduit du fichier Drive lui-même pour une pièce jointe `external`.
 
 ### Composition du message (Gmail, `mimeMessage.ts`)
 
@@ -615,7 +629,7 @@ import { readFileSync } from 'node:fs';
 
 const FilterConditionSchema = z.object({
   label: z.string(),
-  criterium: z.enum(['equals']), // enum à un seul membre — extensible sans casser le format existant
+  criterium: z.enum(['equals', 'not_equals']), // extensible sans casser le format existant
   value: z.string(),
 });
 
@@ -649,6 +663,7 @@ const FileModuleFieldsSchema = z.object({
   template_link: z.string().optional(),
   output_folder: z.string().optional(),
   output_folder_id: z.string().optional(),
+  output_subfolder: z.string().optional(), // résolu sous output_folder_id — voir refines ci-dessous
   output_filename: z.string(),
   link_column: z.string().optional(), // nom de colonne choisi par l'utilisateur — voir writeLinkColumn
 }).merge(InstanceMetaSchema);
@@ -657,7 +672,15 @@ const outputFolderXorRefine = (i: { output_folder?: string; output_folder_id?: s
   Boolean(i.output_folder) !== Boolean(i.output_folder_id);
 const outputFolderXorMessage = { message: 'Exactement une des deux clés output_folder / output_folder_id doit être fournie.' };
 
-const PdfInstanceSchema = FileModuleFieldsSchema.refine(outputFolderXorRefine, outputFolderXorMessage);
+// output_subfolder n'a de sens qu'avec output_folder_id (avec output_folder, le segment se rajoute au chemin) ; jamais vide.
+const outputSubfolderRequiresIdRefine = (i: { output_folder_id?: string; output_subfolder?: string }) =>
+  !i.output_subfolder || Boolean(i.output_folder_id);
+const nonEmptyIfPresent = (value?: string) => value === undefined || value.trim().length > 0;
+
+const PdfInstanceSchema = FileModuleFieldsSchema
+  .refine(outputFolderXorRefine, outputFolderXorMessage)
+  .refine(outputSubfolderRequiresIdRefine, { message: 'output_subfolder ne peut être utilisé qu\'avec output_folder_id.' })
+  .refine((i) => nonEmptyIfPresent(i.output_subfolder), { message: 'output_subfolder ne peut pas être une chaîne vide.' });
 
 const ShareConfigSchema = z.object({
   email: z.object({ addresses: z.array(z.string()), permission: z.enum(['reader', 'commenter', 'editor']) }).optional(),
@@ -669,7 +692,9 @@ const ShareConfigSchema = z.object({
 
 const GdocsInstanceSchema = FileModuleFieldsSchema
   .extend({ share: ShareConfigSchema })
-  .refine(outputFolderXorRefine, outputFolderXorMessage);
+  .refine(outputFolderXorRefine, outputFolderXorMessage)
+  .refine(outputSubfolderRequiresIdRefine, { message: 'output_subfolder ne peut être utilisé qu\'avec output_folder_id.' })
+  .refine((i) => nonEmptyIfPresent(i.output_subfolder), { message: 'output_subfolder ne peut pas être une chaîne vide.' });
 
 const MailInstanceSchema = z.object({
   to: z.string(),
@@ -681,6 +706,8 @@ const MailInstanceSchema = z.object({
   attach: z.enum(['all', 'generated', 'external', 'none']),
   generated: z.array(z.string()).optional().default([]),
   externalFolder: z.string().optional(),
+  externalFolderId: z.string().optional(),
+  externalSubfolder: z.string().optional(), // résolu sous externalFolderId — voir refines ci-dessous
   external: z.array(z.string()).optional().default([]),
   link_column: z.string().optional(),
 }).merge(InstanceMetaSchema).refine(
@@ -699,8 +726,17 @@ const MailInstanceSchema = z.object({
   (mail) => !(mail.attach === 'none' && (mail.generated.length > 0 || mail.external.length > 0)),
   { message: 'attach: "none" nécessite generated ET external vides.' }
 ).refine(
-  (mail) => mail.external.length === 0 || Boolean(mail.externalFolder),
-  { message: 'externalFolder est requis dès que external est utilisé.' }
+  (mail) => !(mail.externalFolder && mail.externalFolderId),
+  { message: 'externalFolder et externalFolderId sont mutuellement exclusifs.' }
+).refine(
+  (mail) => mail.external.length === 0 || Boolean(mail.externalFolder) || Boolean(mail.externalFolderId),
+  { message: 'externalFolder ou externalFolderId est requis dès que external est utilisé.' }
+).refine(
+  (mail) => !mail.externalSubfolder || Boolean(mail.externalFolderId),
+  { message: 'externalSubfolder ne peut être utilisé qu\'avec externalFolderId.' }
+).refine(
+  (mail) => nonEmptyIfPresent(mail.externalSubfolder),
+  { message: 'externalSubfolder ne peut pas être une chaîne vide.' }
 );
 
 const ProfileSchema = z.object({
@@ -827,7 +863,11 @@ Si une ou plusieurs colonnes `mmm_status`/`mmm_outputs`/`mmm_last_run` sont abse
 
 ### Résolution de chemins dynamiques (`folderResolver.ts`)
 
-Substitution de balises via `renderTemplateString`, cache par exécution, création automatique des segments manquants selon `autoCreateFolders` (défaut `true`). Le premier segment est résolu depuis la racine "Mon Drive" (`root`) — un chemin comme `Contrats/2026` part donc de la racine du Drive du compte authentifié, pas d'un dossier configurable ailleurs. Si plusieurs dossiers portent le même nom au même niveau (ambiguïté), `Erreur` listant les IDs Drive des dossiers en conflit (pour identifier lequel supprimer/renommer) — même règle que pour la recherche de fichiers externes (§3, §7 ci-dessous), bien que specs.md ne l'explicite que pour ce second cas.
+Substitution de balises via `renderTemplateString`, cache par exécution, création automatique des segments manquants selon `autoCreateFolders` (défaut `true`). Le premier segment est résolu depuis la racine "Mon Drive" (`root`) par défaut — un chemin comme `Contrats/2026` part donc de la racine du Drive du compte authentifié, sauf si un point de départ explicite est fourni (voir `resolveConfiguredFolderId` ci-dessous). Si plusieurs dossiers portent le même nom au même niveau (ambiguïté), `Erreur` listant les IDs Drive des dossiers en conflit (pour identifier lequel supprimer/renommer) — même règle que pour la recherche de fichiers externes (§3, §7 ci-dessous), bien que specs.md ne l'explicite que pour ce second cas.
+
+`resolveFolderPath` accepte un neuvième paramètre optionnel `startParentId` (défaut `'root'`), pour descendre un chemin dynamique sous un dossier connu par ID plutôt que depuis la racine. La clé de cache (`cache.get`/`cache.set`) inclut désormais `startParentId` (`` `${startParentId}:${resolvedPath}` `` plutôt que `resolvedPath` seul) : deux instances partant de dossiers conteneurs différents peuvent résoudre le même chemin relatif (ex: même nom de sous-dossier `"2026-08"` sous deux `output_folder_id` distincts) sans que ce soit le même dossier Drive — sans cette correction, la seconde résolution renverrait à tort l'ID mis en cache par la première.
+
+**`resolveConfiguredFolderId(moduleName, drive, config, rawData, defaultDateFormat, autoCreate, cache, quiet)`** — nouvelle fonction exportée, factorise la règle "chemin de noms depuis la racine (`config.folder`) XOR ID fixe (`config.folderId`), avec un sous-chemin dynamique optionnel (`config.subfolder`) résolu **sous** cet ID" : si `folderId` est fourni sans `subfolder`, retourne l'ID directement (aucun appel Drive, comportement historique inchangé) ; si `folderId` **et** `subfolder` sont fournis, résout `subfolder` via `resolveFolderPath` avec `folderId` comme `startParentId` ; sinon, résout `folder` comme chemin complet depuis la racine (comportement historique inchangé). Signature générique (`folder`/`folderId`/`subfolder`, pas `output_*`/`external*`) : partagée telle quelle par `googleDocsHelpers.ts#resolveOutputFolderId` (`output_folder`/`output_folder_id`/`output_subfolder`) et `mail.ts#resolveExternalFiles` (`externalFolder`/`externalFolderId`/`externalSubfolder`) — chaque appelant fait juste la correspondance de noms de champs, la logique de branchement n'est écrite qu'une fois.
 
 ### Copie du template (instances gDocs)
 
@@ -843,7 +883,7 @@ Résoudre les balises **avant** `files.copy` est délibéré : si une balise du 
 
 ### Recherche des fichiers externes (résolution interne à chaque instance Mail)
 
-`externalFolder` résolu via `renderTemplateString` (jamais soumis à `autoCreateFolders`), puis chaque nom de fichier résolu, puis `files.list` filtré sur ce nom exact + le dossier résolu. 0 résultat, plusieurs résultats, ou doublon résolu → `Erreur`.
+Dossier résolu via `resolveConfiguredFolderId` (voir ci-dessus) — `externalFolder` (chemin depuis la racine) ou `externalFolderId` (+ `externalSubfolder` optionnel résolu sous cet ID) — toujours avec `autoCreate` forcé à `false`, y compris pour `externalSubfolder` (c'est un dossier qu'on cherche, pas qu'on écrit — jamais de création automatique, contrairement à `output_subfolder`). Puis chaque nom de fichier résolu, puis `files.list` filtré sur ce nom exact + le dossier résolu. 0 résultat, plusieurs résultats, ou doublon résolu → `Erreur`.
 
 ### Purge globale avant régénération
 
